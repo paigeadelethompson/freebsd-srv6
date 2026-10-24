@@ -111,9 +111,9 @@ load the kernel module** unless you are certain it is safe.
 
 ```mermaid
 graph LR
-    A[Ingress<br>IPv6 packet] -->|"in" hook| B[srv6 node]
+    A[Ingress<br>IPv6 packet] -->|in hook| B[srv6 node]
     B --> C{Local SID match?}
-    C -->|No| D[Transit: decrement HLIM<br>forward out "out" hook]
+    C -->|No| D[Transit: decrement HLIM<br>forward out out hook]
     C -->|Yes| E[srv6_process_packet]
     E --> F{srv6_execute<br>behavior decode}
     F -->|End| G[Process SRH segments<br>decrement HLIM<br>continue]
@@ -121,7 +121,7 @@ graph LR
     F -->|End.DX6/DX4| I[Decapsulate<br>forward inner packet]
     F -->|End.B6.Encaps| J[Push new SRH<br>forward out]
     G -->|SRV6_ACT_CONTINUE| K[Next SID lookup]
-    G -->|SRV6_ACT_FORWARD_OUT| L["out" hook]
+    G -->|SRV6_ACT_FORWARD_OUT| L[out hook]
     H --> L
     I --> L
     J --> L
