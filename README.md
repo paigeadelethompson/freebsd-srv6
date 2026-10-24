@@ -31,7 +31,12 @@ The node type is registered as `NG_SRV6_NODE_TYPE` (`"srv6"`).
 - `"out"` (`NG_SRV6_HOOK_OUT`): default egress hook. Packets that resolve to
   `SRV6_ACT_FORWARD_OUT` are sent out this hook.
 - Additional hooks may be created and named in adjacency entries; they are
-  used by `End.X` and `End.DX*` behaviors to forward to a specific next hop.
+  used by `End.X` and `End.DX*` behaviors to forward to a specific next hook.
+
+The `srv6` node does not attach directly to a physical interface.  Hooks are
+wired up through netgraph: connect an `ng_ether` node (bound to a physical NIC)
+to the `srv6` node's `"in"` and `"out"` hooks so packets flow in and out of the
+SRv6 data path.  See the "Connecting to a physical interface" section below.
 
 ### Control messages (`ngctl`)
 
@@ -106,6 +111,32 @@ from the codepoint as described in RFC 8986 and RFC 9800. See
 The node is a netgraph type named `srv6`. Create a node, add hooks, and
 configure SIDs and adjacencies with `ngctl`. **Build and inspect only — do not
 load the kernel module** unless you are certain it is safe.
+
+### Connecting to a physical interface
+
+The `srv6` node is a pure netgraph node: it does not own a network interface
+directly.  To attach it to a physical NIC, use `ng_ether` as a bridge between
+the NIC and the `srv6` node's `"in"` and `"out"` hooks.
+
+Example (replace `em0` with your interface name):
+
+```sh
+# 1. Create an ng_ether node bound to the physical NIC
+ngctl mkpeer . ether ether/em0
+
+# 2. Create the srv6 node
+ngctl mkpeer . srv6 srv6_r1
+
+# 3. Connect the NIC's upper hook to srv6's "in" hook (ingress)
+ngctl connect em0: srv6_r1: upper in
+
+# 4. Connect srv6's "out" hook back to the NIC's upper hook (egress)
+ngctl connect srv6_r1: em0: out upper
+```
+
+Additional named hooks for adjacencies can be connected similarly; the hook
+name is stored in the adjacency config via `addadj` and used by
+`srv6_forward_adj()`.
 
 ### Data path diagram
 
