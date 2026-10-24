@@ -60,6 +60,15 @@ MALLOC_DEFINE(M_SRV6, "srv6", "SRv6 netgraph node");
 #define	SRV6_UNLOCK(priv)	mtx_unlock(&(priv)->lock)
 
 /*
+ * Debug trace for every error path.  Only prints when bootverbose is set,
+ * so it is silent in normal operation.
+ */
+#define	SRV6_DEBUG(fmt, ...)	do {					\
+	if (bootverbose)						\
+		printf("srv6: %s: " fmt "\n", __func__, ##__VA_ARGS__);	\
+} while (0)
+
+/*
  * Internal packet description.  The flexible-array SRH definition is used
  * for the on-wire structure; a fixed-size copy is kept here.
  */
@@ -198,15 +207,21 @@ srv6_ip6_parse(__unused const struct ng_parse_type *type, const char *s,
 	char tmp[INET6_ADDRSTRLEN];
 	size_t len;
 
-	if (*buflen < (int)sizeof(struct in6_addr))
+	if (*buflen < (int)sizeof(struct in6_addr)) {
+		SRV6_DEBUG("ip6 parse: buflen too small");
 		return (ERANGE);
+	}
 	len = strcspn(s + *off, " \t\r\n,}]");
-	if (len == 0 || len >= sizeof(tmp))
+	if (len == 0 || len >= sizeof(tmp)) {
+		SRV6_DEBUG("ip6 parse: bad address length");
 		return (EINVAL);
+	}
 	memcpy(tmp, s + *off, len);
 	tmp[len] = '\0';
-	if (inet_pton(AF_INET6, tmp, buf) != 1)
+	if (inet_pton(AF_INET6, tmp, buf) != 1) {
+		SRV6_DEBUG("ip6 parse: inet_pton failed");
 		return (EINVAL);
+	}
 	*off += len;
 	*buflen = sizeof(struct in6_addr);
 	return (0);
@@ -218,10 +233,14 @@ srv6_ip6_unparse(__unused const struct ng_parse_type *type,
 {
 	char tmp[INET6_ADDRSTRLEN];
 
-	if (inet_ntop(AF_INET6, data + *off, tmp, sizeof(tmp)) == NULL)
+	if (inet_ntop(AF_INET6, data + *off, tmp, sizeof(tmp)) == NULL) {
+		SRV6_DEBUG("ip6 unparse: inet_ntop failed");
 		return (EINVAL);
-	if (strlcpy(cbuf, tmp, cbuflen) >= (size_t)cbuflen)
+	}
+	if (strlcpy(cbuf, tmp, cbuflen) >= (size_t)cbuflen) {
+		SRV6_DEBUG("ip6 unparse: buffer too small");
 		return (ERANGE);
+	}
 	*off += sizeof(struct in6_addr);
 	return (0);
 }
@@ -666,6 +685,7 @@ srv6_behavior_decode(uint16_t cp, enum srv6_base_behavior *base,
 		*base = SRV6_BASE_END;
 		return (0);
 	default:
+		SRV6_DEBUG("behavior decode: unknown codepoint %u", cp);
 		return (EINVAL);
 	}
 }
@@ -678,8 +698,10 @@ srv6_validate_sid(const struct srv6_sid_config *cfg)
 	int error;
 
 	error = srv6_behavior_decode(cfg->behavior, &base, &flags);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("validate sid: behavior decode failed: %d", error);
 		return (error);
+	}
 
 	switch (base) {
 	case SRV6_BASE_BM:
@@ -688,22 +710,29 @@ srv6_validate_sid(const struct srv6_sid_config *cfg)
 	case SRV6_BASE_DT2M:
 	case SRV6_BASE_LBS:
 	case SRV6_BASE_XLBS:
+		SRV6_DEBUG("validate sid: behavior %u not supported", base);
 		return (EOPNOTSUPP);
 	default:
 		break;
 	}
 
-	if (cfg->nsegments > SRV6_MAX_SEGMENTS)
+	if (cfg->nsegments > SRV6_MAX_SEGMENTS) {
+		SRV6_DEBUG("validate sid: too many segments %u", cfg->nsegments);
 		return (EINVAL);
+	}
 
 	if ((base == SRV6_BASE_B6_ENCAPS ||
-	    base == SRV6_BASE_B6_ENCAPS_RED) && cfg->nsegments == 0)
+	    base == SRV6_BASE_B6_ENCAPS_RED) && cfg->nsegments == 0) {
+		SRV6_DEBUG("validate sid: B6 encap with no segments");
 		return (EINVAL);
+	}
 
 	if ((base == SRV6_BASE_END_X || base == SRV6_BASE_DX6 ||
 	    base == SRV6_BASE_DX4 || base == SRV6_BASE_DX2) &&
-	    cfg->adj_index == 0)
+	    cfg->adj_index == 0) {
+		SRV6_DEBUG("validate sid: End.X/DX with no adjacency");
 		return (EINVAL);
+	}
 
 	if ((flags & (SRV6_FLAVOR_NEXT_CSID | SRV6_FLAVOR_REPLACE_CSID)) != 0 &&
 	    (base == SRV6_BASE_END || base == SRV6_BASE_END_X ||
@@ -712,8 +741,10 @@ srv6_validate_sid(const struct srv6_sid_config *cfg)
 		int A, F, L;
 
 		error = srv6_csid_layout(cfg, flags, &L, &F, &A);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("validate sid: csid layout failed: %d", error);
 			return (error);
+		}
 	}
 
 	return (0);
@@ -736,6 +767,8 @@ srv6_lookup_adj(struct srv6_priv *priv, uint32_t index,
 		}
 	}
 	SRV6_UNLOCK(priv);
+	if (error != 0)
+		SRV6_DEBUG("lookup adj: index %u not found", index);
 	return (error);
 }
 
@@ -776,11 +809,15 @@ srv6_parse_packet(struct mbuf *m, struct srv6_pkt *pkt)
 	pkt->srh_prev_off = -1;
 
 	mlen = m_length(m, NULL);
-	if (mlen < (int)sizeof(struct ip6_hdr))
+	if (mlen < (int)sizeof(struct ip6_hdr)) {
+		SRV6_DEBUG("parse packet: too short %d", mlen);
 		return (EMSGSIZE);
+	}
 	m_copydata(m, 0, sizeof(struct ip6_hdr), &pkt->ip6);
-	if ((pkt->ip6.ip6_vfc & IPV6_VERSION_MASK) != IPV6_VERSION)
+	if ((pkt->ip6.ip6_vfc & IPV6_VERSION_MASK) != IPV6_VERSION) {
+		SRV6_DEBUG("parse packet: not IPv6");
 		return (EINVAL);
+	}
 
 	pkt->mlen = mlen;
 	off = sizeof(struct ip6_hdr);
@@ -793,8 +830,10 @@ srv6_parse_packet(struct mbuf *m, struct srv6_pkt *pkt)
 			pkt->upper_nxt = nxt;
 			return (0);
 		}
-		if (off + (int)sizeof(struct ip6_ext) > mlen)
+		if (off + (int)sizeof(struct ip6_ext) > mlen) {
+			SRV6_DEBUG("parse packet: extension header too short");
 			return (EMSGSIZE);
+		}
 		m_copydata(m, off, sizeof(struct ip6_ext), &ext);
 
 		switch (nxt) {
@@ -815,21 +854,29 @@ srv6_parse_packet(struct mbuf *m, struct srv6_pkt *pkt)
 			return (0);
 		}
 
-		if (hlen < 8 || off + hlen > mlen)
+		if (hlen < 8 || off + hlen > mlen) {
+			SRV6_DEBUG("parse packet: invalid extension length");
 			return (EMSGSIZE);
+		}
 
 		if (nxt == IPPROTO_ROUTING) {
 			m_copydata(m, off, sizeof(srh), &srh);
 			if (srh.routing_type == 4 && pkt->srh_off < 0) {
 				slen = (srh.hdr_ext_len + 1) * 8;
-				if (slen != hlen || (srh.hdr_ext_len & 1) != 0)
+				if (slen != hlen || (srh.hdr_ext_len & 1) != 0) {
+					SRV6_DEBUG("parse packet: bad SRH length");
 					return (EINVAL);
+				}
 				max_le = srh.hdr_ext_len / 2 - 1;
-				if (max_le < 0 || srh.last_entry > max_le)
+				if (max_le < 0 || srh.last_entry > max_le) {
+					SRV6_DEBUG("parse packet: bad SRH last_entry");
 					return (EINVAL);
+				}
 				if ((int)sizeof(srh) +
-				    (srh.last_entry + 1) * SRV6_SID_LEN > slen)
+				    (srh.last_entry + 1) * SRV6_SID_LEN > slen) {
+					SRV6_DEBUG("parse packet: SRH segment list overflow");
 					return (EINVAL);
+				}
 				pkt->srh_off = off;
 				pkt->srh_len = slen;
 				pkt->srh = srh;
@@ -849,20 +896,30 @@ srv6_parse_srh(struct mbuf *m, int off, struct srv6_srh *srh)
 	int max_le, mlen, slen;
 
 	mlen = m_length(m, NULL);
-	if (off < 0 || off + (int)sizeof(struct srv6_srh) > mlen)
+	if (off < 0 || off + (int)sizeof(struct srv6_srh) > mlen) {
+		SRV6_DEBUG("parse srh: offset out of range off=%d", off);
 		return (EMSGSIZE);
+	}
 	m_copydata(m, off, sizeof(struct srv6_srh), srh);
-	if (srh->routing_type != 4 || (srh->hdr_ext_len & 1) != 0)
+	if (srh->routing_type != 4 || (srh->hdr_ext_len & 1) != 0) {
+		SRV6_DEBUG("parse srh: bad routing type or ext len");
 		return (EINVAL);
+	}
 	slen = (srh->hdr_ext_len + 1) * 8;
-	if (off + slen > mlen)
+	if (off + slen > mlen) {
+		SRV6_DEBUG("parse srh: SRH extends past mbuf");
 		return (EMSGSIZE);
+	}
 	max_le = srh->hdr_ext_len / 2 - 1;
-	if (max_le < 0 || srh->last_entry > max_le)
+	if (max_le < 0 || srh->last_entry > max_le) {
+		SRV6_DEBUG("parse srh: bad last_entry %u", srh->last_entry);
 		return (EINVAL);
+	}
 	if ((int)sizeof(struct srv6_srh) +
-	    (srh->last_entry + 1) * SRV6_SID_LEN > slen)
+	    (srh->last_entry + 1) * SRV6_SID_LEN > slen) {
+		SRV6_DEBUG("parse srh: segment list overflow");
 		return (EINVAL);
+	}
 	return (0);
 }
 
@@ -873,15 +930,25 @@ srv6_srh_valid(const struct srv6_pkt *pkt)
 
 	if (pkt->srh_off < 0)
 		return (0);
-	if (pkt->srh.routing_type != 4 || (pkt->srh.hdr_ext_len & 1) != 0)
+	if (pkt->srh.routing_type != 4 || (pkt->srh.hdr_ext_len & 1) != 0) {
+		SRV6_DEBUG("srh valid: bad routing type or ext len");
 		return (EINVAL);
+	}
 	max_le = pkt->srh.hdr_ext_len / 2 - 1;
-	if (max_le < 0 || pkt->srh.last_entry > max_le)
+	if (max_le < 0 || pkt->srh.last_entry > max_le) {
+		SRV6_DEBUG("srh valid: bad last_entry %u",
+		    pkt->srh.last_entry);
 		return (EINVAL);
-	if (pkt->srh.segments_left > pkt->srh.last_entry + 1)
+	}
+	if (pkt->srh.segments_left > pkt->srh.last_entry + 1) {
+		SRV6_DEBUG("srh valid: segments_left %u > last_entry+1",
+		    pkt->srh.segments_left);
 		return (EINVAL);
-	if (pkt->srh_len != (pkt->srh.hdr_ext_len + 1) * 8)
+	}
+	if (pkt->srh_len != (pkt->srh.hdr_ext_len + 1) * 8) {
+		SRV6_DEBUG("srh valid: srh_len mismatch");
 		return (EINVAL);
+	}
 	return (0);
 }
 
@@ -891,12 +958,16 @@ srv6_get_segment(struct mbuf *m, const struct srv6_pkt *pkt, int index,
 {
 	int off;
 
-	if (index < 0 || index > pkt->srh.last_entry)
+	if (index < 0 || index > pkt->srh.last_entry) {
+		SRV6_DEBUG("get segment: index %d out of range", index);
 		return (EINVAL);
+	}
 	off = pkt->srh_off + sizeof(struct srv6_srh_hdr) +
 	    index * SRV6_SID_LEN;
-	if (off + SRV6_SID_LEN > pkt->srh_off + pkt->srh_len)
+	if (off + SRV6_SID_LEN > pkt->srh_off + pkt->srh_len) {
+		SRV6_DEBUG("get segment: index %d extends past SRH", index);
 		return (EINVAL);
+	}
 	m_copydata(m, off, SRV6_SID_LEN, seg);
 	return (0);
 }
@@ -914,8 +985,10 @@ srv6_update_sl(struct mbuf *m, struct srv6_pkt *pkt, int sl)
 {
 	uint8_t v;
 
-	if (sl < 0 || sl > 255)
+	if (sl < 0 || sl > 255) {
+		SRV6_DEBUG("update sl: invalid segments_left %d", sl);
 		return (EINVAL);
+	}
 	v = sl;
 	m_copyback(m, pkt->srh_off +
 	    offsetof(struct srv6_srh_hdr, segments_left), 1, &v);
@@ -929,8 +1002,10 @@ srv6_decrement_hlim(struct mbuf *m, struct srv6_pkt *pkt)
 	uint8_t hlim;
 
 	hlim = pkt->ip6.ip6_hlim;
-	if (hlim <= 1)
+	if (hlim <= 1) {
+		SRV6_DEBUG("decrement hlim: hlim too low %u", hlim);
 		return (EHOSTUNREACH);
+	}
 	hlim--;
 	m_copyback(m, IP6_OFF_HLIM, 1, &hlim);
 	pkt->ip6.ip6_hlim = hlim;
@@ -955,8 +1030,11 @@ srv6_pop_srh(struct mbuf *m, struct srv6_pkt *pkt)
 
 	shift = pkt->srh_len;
 	total = m_length(m, NULL);
-	if (shift <= 0 || pkt->srh_off + shift > total)
+	if (shift <= 0 || pkt->srh_off + shift > total) {
+		SRV6_DEBUG("pop srh: invalid shift %d off %d total %d",
+		    shift, pkt->srh_off, total);
 		return (EINVAL);
+	}
 
 	nxt = pkt->srh.next_header;
 	if (pkt->srh_prev_off < 0)
@@ -1073,17 +1151,25 @@ srv6_csid_layout(const struct srv6_sid_config *sid, uint32_t flags,
 	*L = sid->loc_len;
 	*F = sid->funct_len;
 	*A = sid->arg_len;
-	if (*F <= 0 || *L + *F + *A != 128)
+	if (*F <= 0 || *L + *F + *A != 128) {
+		SRV6_DEBUG("csid layout: invalid L/F/A lengths");
 		return (EINVAL);
-	if ((flags & SRV6_FLAVOR_NEXT_CSID) != 0 && *A == 0)
+	}
+	if ((flags & SRV6_FLAVOR_NEXT_CSID) != 0 && *A == 0) {
+		SRV6_DEBUG("csid layout: NEXT_CSID with zero arg len");
 		return (EINVAL);
+	}
 	if ((flags & SRV6_FLAVOR_REPLACE_CSID) != 0) {
-		if (*F != 16 && *F != 32)
+		if (*F != 16 && *F != 32) {
+			SRV6_DEBUG("csid layout: invalid funct len %d", *F);
 			return (EINVAL);
+		}
 		K = 128 / *F;
 		X = srv6_log2ceil(K);
-		if (*A < X || *L + *F + X > 128)
+		if (*A < X || *L + *F + X > 128) {
+			SRV6_DEBUG("csid layout: REPLACE_CSID overflow");
 			return (EINVAL);
+		}
 	}
 	return (0);
 }
@@ -1119,24 +1205,32 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 	*handled = 0;
 	*end = 0;
 	error = srv6_csid_layout(sid, flags, &L, &F, &A);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: layout failed: %d", error);
 		return (error);
+	}
 
 	da = pkt->ip6.ip6_dst.s6_addr;
 	if ((flags & SRV6_FLAVOR_NEXT_CSID) != 0) {
 		if (!srv6_bits_nonzero(da, L + F, A))
 			return (0);
-		if (pkt->ip6.ip6_hlim <= 1)
+		if (pkt->ip6.ip6_hlim <= 1) {
+			SRV6_DEBUG("csid process: hlim too low for NEXT_CSID");
 			return (EHOSTUNREACH);
+		}
 		memcpy(newda, da, SRV6_SID_LEN);
 		srv6_copy_bits(newda, L, da, L + F, A);
 		srv6_zero_bits(newda, L + A, 128 - (L + A));
 		error = srv6_update_da(m, pkt, newda);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("csid process: update da failed: %d", error);
 			return (error);
+		}
 		error = srv6_decrement_hlim(m, pkt);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
 			return (error);
+		}
 		*handled = 1;
 		return (0);
 	}
@@ -1145,13 +1239,17 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 	if (pkt->srh_off < 0)
 		return (0);
 	error = srv6_srh_valid(pkt);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: srh invalid: %d", error);
 		return (error);
+	}
 
 	K = 128 / F;
 	X = srv6_log2ceil(K);
-	if (A < X || L + F + X > 128)
+	if (A < X || L + F + X > 128) {
+		SRV6_DEBUG("csid process: REPLACE_CSID layout invalid");
 		return (EINVAL);
+	}
 	sl = pkt->srh.segments_left;
 	index = (int)srv6_get_bits64(da, 128 - X, X);
 
@@ -1176,8 +1274,10 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 			if ((flags & (SRV6_FLAVOR_PSP |
 			    SRV6_FLAVOR_USP)) != 0) {
 				error = srv6_pop_srh(m, pkt);
-				if (error != 0)
+				if (error != 0) {
+					SRV6_DEBUG("csid process: pop srh failed: %d", error);
 					return (error);
+				}
 			}
 			*handled = 1;
 			*end = 1;
@@ -1186,19 +1286,25 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 	}
 
 	if (index != 0) {
-		if (sl > pkt->srh.last_entry)
+		if (sl > pkt->srh.last_entry) {
+			SRV6_DEBUG("csid process: sl %d > last_entry %d", sl, pkt->srh.last_entry);
 			return (EINVAL);
+		}
 		newindex = index - 1;
 		error = srv6_get_segment(m, pkt, sl, container);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
 			return (error);
+		}
 		if (!srv6_bits_nonzero(container, newindex * F, F)) {
 			if (sl == 0) {
 				if ((flags & (SRV6_FLAVOR_PSP |
 				    SRV6_FLAVOR_USP)) != 0) {
 					error = srv6_pop_srh(m, pkt);
-					if (error != 0)
+					if (error != 0) {
+						SRV6_DEBUG("csid process: pop srh failed: %d", error);
 						return (error);
+					}
 				}
 				*handled = 1;
 				*end = 1;
@@ -1206,48 +1312,68 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 			}
 			sl--;
 			error = srv6_update_sl(m, pkt, sl);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("csid process: update sl failed: %d", error);
 				return (error);
+			}
 			error = srv6_get_segment(m, pkt, sl, container);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
 				return (error);
+			}
 			error = srv6_update_da(m, pkt, container);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("csid process: update da failed: %d", error);
 				return (error);
+			}
 			error = srv6_decrement_hlim(m, pkt);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
 				return (error);
+			}
 			*handled = 1;
 			return (0);
 		}
 		srv6_csid_build(newda, da, container, newindex, L, F, X,
 		    newindex);
 		error = srv6_update_da(m, pkt, newda);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("csid process: update da failed: %d", error);
 			return (error);
+		}
 		error = srv6_decrement_hlim(m, pkt);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
 			return (error);
+		}
 		*handled = 1;
 		return (0);
 	}
 
 	/* index == 0 and there are more containers. */
-	if (sl > pkt->srh.last_entry + 1)
+	if (sl > pkt->srh.last_entry + 1) {
+		SRV6_DEBUG("csid process: sl %d > last_entry+1 %d", sl, pkt->srh.last_entry + 1);
 		return (EINVAL);
+	}
 	sl--;
 	error = srv6_update_sl(m, pkt, sl);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: update sl failed: %d", error);
 		return (error);
+	}
 	newindex = K - 1;
 	error = srv6_get_segment(m, pkt, sl, container);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
 		return (error);
+	}
 	if (!srv6_bits_nonzero(container, newindex * F, F)) {
 		if ((flags & (SRV6_FLAVOR_PSP | SRV6_FLAVOR_USP)) != 0) {
 			error = srv6_pop_srh(m, pkt);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("csid process: pop srh failed: %d", error);
 				return (error);
+			}
 		}
 		*handled = 1;
 		*end = 1;
@@ -1255,11 +1381,15 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 	}
 	srv6_csid_build(newda, da, container, newindex, L, F, X, newindex);
 	error = srv6_update_da(m, pkt, newda);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: update da failed: %d", error);
 		return (error);
+	}
 	error = srv6_decrement_hlim(m, pkt);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
 		return (error);
+	}
 	*handled = 1;
 	return (0);
 }
@@ -1281,6 +1411,7 @@ srv6_pick_src(struct srv6_priv *priv, const struct srv6_sid_config *sid,
 		*src = pkt->ip6.ip6_src;
 		return (0);
 	}
+	SRV6_DEBUG("pick src: no source address available");
 	return (EADDRNOTAVAIL);
 }
 
@@ -1306,6 +1437,7 @@ srv6_process_upper(struct srv6_priv *priv, struct mbuf *m,
 		res->action = SRV6_ACT_FORWARD_OUT;
 		break;
 	default:
+		SRV6_DEBUG("process upper: unsupported base %d", base);
 		return (EOPNOTSUPP);
 	}
 	return (0);
@@ -1324,40 +1456,56 @@ srv6_process_end(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
 		    res));
 
 	error = srv6_srh_valid(pkt);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process end: srh invalid: %d", error);
 		return (error);
+	}
 
 	if (pkt->srh.segments_left == 0) {
 		if ((flags & SRV6_FLAVOR_USP) != 0) {
 			error = srv6_pop_srh(m, pkt);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("process end: pop srh failed: %d", error);
 				return (error);
+			}
 		}
 		return (srv6_process_upper(priv, m, pkt, sid, base, flags,
 		    res));
 	}
 
-	if (pkt->ip6.ip6_hlim <= 1)
+	if (pkt->ip6.ip6_hlim <= 1) {
+		SRV6_DEBUG("process end: hlim too low");
 		return (EHOSTUNREACH);
+	}
 
 	sl = pkt->srh.segments_left - 1;
 	error = srv6_get_segment(m, pkt, sl, &da);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process end: get segment %d failed: %d", sl, error);
 		return (error);
+	}
 	error = srv6_decrement_hlim(m, pkt);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process end: decrement hlim failed: %d", error);
 		return (error);
+	}
 	error = srv6_update_sl(m, pkt, sl);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process end: update sl failed: %d", error);
 		return (error);
+	}
 	error = srv6_update_da(m, pkt, &da);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process end: update da failed: %d", error);
 		return (error);
+	}
 
 	if ((flags & SRV6_FLAVOR_PSP) != 0 && sl == 0) {
 		error = srv6_pop_srh(m, pkt);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("process end: pop srh failed: %d", error);
 			return (error);
+		}
 		return (srv6_process_upper(priv, m, pkt, sid, base, flags,
 		    res));
 	}
@@ -1381,11 +1529,16 @@ srv6_decap_and_forward(struct srv6_priv *priv, struct mbuf *m,
 	int error, mlen;
 
 	mlen = m_length(m, NULL);
-	if (pkt->outer_len <= 0 || pkt->outer_len >= mlen)
+	if (pkt->outer_len <= 0 || pkt->outer_len >= mlen) {
+		SRV6_DEBUG("decap and forward: invalid outer_len %d",
+		    pkt->outer_len);
 		return (EINVAL);
+	}
 	error = srv6_decapsulate(m, pkt->outer_len);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("decap and forward: decapsulate failed: %d", error);
 		return (error);
+	}
 
 	switch (base) {
 	case SRV6_BASE_END:
@@ -1423,6 +1576,7 @@ srv6_decap_and_forward(struct srv6_priv *priv, struct mbuf *m,
 			res->fib_table = sid->fib_table;
 		break;
 	default:
+		SRV6_DEBUG("decap and forward: unsupported base %d", base);
 		return (EOPNOTSUPP);
 	}
 	return (0);
@@ -1437,43 +1591,61 @@ srv6_process_decap(struct srv6_priv *priv, struct mbuf *m,
 
 	if (pkt->srh_off >= 0) {
 		error = srv6_srh_valid(pkt);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("process decap: srh invalid: %d", error);
 			return (error);
-		if (pkt->srh.segments_left != 0)
+		}
+		if (pkt->srh.segments_left != 0) {
+			SRV6_DEBUG("process decap: segments_left nonzero");
 			return (EINVAL);
+		}
 	}
 
 	switch (base) {
 	case SRV6_BASE_DX6:
-		if (pkt->upper_nxt != IPPROTO_IPV6)
+		if (pkt->upper_nxt != IPPROTO_IPV6) {
+			SRV6_DEBUG("process decap: DX6 expects IPv6");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DX4:
-		if (pkt->upper_nxt != IPPROTO_IPV4)
+		if (pkt->upper_nxt != IPPROTO_IPV4) {
+			SRV6_DEBUG("process decap: DX4 expects IPv4");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DT6:
-		if (pkt->upper_nxt != IPPROTO_IPV6)
+		if (pkt->upper_nxt != IPPROTO_IPV6) {
+			SRV6_DEBUG("process decap: DT6 expects IPv6");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DT4:
-		if (pkt->upper_nxt != IPPROTO_IPV4)
+		if (pkt->upper_nxt != IPPROTO_IPV4) {
+			SRV6_DEBUG("process decap: DT4 expects IPv4");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DT46:
 		if (pkt->upper_nxt != IPPROTO_IPV4 &&
-		    pkt->upper_nxt != IPPROTO_IPV6)
+		    pkt->upper_nxt != IPPROTO_IPV6) {
+			SRV6_DEBUG("process decap: DT46 expects IPv4 or IPv6");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DX2:
-		if (pkt->upper_nxt != SRV6_IPPROTO_ETHERNET)
+		if (pkt->upper_nxt != SRV6_IPPROTO_ETHERNET) {
+			SRV6_DEBUG("process decap: DX2 expects Ethernet");
 			return (EINVAL);
+		}
 		return (srv6_decap_and_forward(priv, m, pkt, sid, base, res));
 	case SRV6_BASE_DX2V:
 	case SRV6_BASE_DT2U:
 	case SRV6_BASE_DT2M:
+		SRV6_DEBUG("process decap: base %d not supported", base);
 		return (EOPNOTSUPP);
 	default:
+		SRV6_DEBUG("process decap: unsupported base %d", base);
 		return (EOPNOTSUPP);
 	}
 }
@@ -1491,36 +1663,54 @@ srv6_process_b6(struct srv6_priv *priv, struct mbuf **mp,
 
 	if (csid_done == 0 && pkt->srh_off >= 0) {
 		error = srv6_srh_valid(pkt);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("process b6: srh invalid: %d", error);
 			return (error);
+		}
 		if (pkt->srh.segments_left > 0) {
-			if (pkt->ip6.ip6_hlim <= 1)
+			if (pkt->ip6.ip6_hlim <= 1) {
+				SRV6_DEBUG("process b6: hlim too low");
 				return (EHOSTUNREACH);
+			}
 			sl = pkt->srh.segments_left - 1;
 			error = srv6_get_segment(*mp, pkt, sl, &da);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("process b6: get segment %d failed: %d", sl, error);
 				return (error);
+			}
 			error = srv6_decrement_hlim(*mp, pkt);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("process b6: decrement hlim failed: %d", error);
 				return (error);
+			}
 			error = srv6_update_sl(*mp, pkt, sl);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("process b6: update sl failed: %d", error);
 				return (error);
+			}
 			error = srv6_update_da(*mp, pkt, &da);
-			if (error != 0)
+			if (error != 0) {
+				SRV6_DEBUG("process b6: update da failed: %d", error);
 				return (error);
+			}
 		}
 	}
 
-	if (sid->nsegments == 0 || sid->nsegments > SRV6_MAX_SEGMENTS)
+	if (sid->nsegments == 0 || sid->nsegments > SRV6_MAX_SEGMENTS) {
+		SRV6_DEBUG("process b6: invalid segment count %u", sid->nsegments);
 		return (EINVAL);
+	}
 	error = srv6_pick_src(priv, sid, pkt, &src);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process b6: pick src failed: %d", error);
 		return (error);
+	}
 	error = srv6_encapsulate(mp, &src, &sid->segments[0],
 	    sid->segments, sid->nsegments, reduced);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("process b6: encapsulate failed: %d", error);
 		return (error);
+	}
 
 	res->action = SRV6_ACT_FORWARD_OUT;
 	res->fib_table = sid->fib_table;
@@ -1537,8 +1727,10 @@ srv6_execute(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
 
 	memset(res, 0, sizeof(*res));
 	error = srv6_behavior_decode(sid->behavior, &base, &flags);
-	if (error != 0)
+	if (error != 0) {
+		SRV6_DEBUG("execute: behavior decode failed: %d", error);
 		return (error);
+	}
 
 	if ((flags & (SRV6_FLAVOR_NEXT_CSID | SRV6_FLAVOR_REPLACE_CSID)) != 0 &&
 	    (base == SRV6_BASE_END || base == SRV6_BASE_END_X ||
@@ -1546,8 +1738,10 @@ srv6_execute(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
 	    base == SRV6_BASE_B6_ENCAPS_RED)) {
 		error = srv6_csid_process(*mp, pkt, sid, flags, &handled,
 		    &end);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("execute: csid process failed: %d", error);
 			return (error);
+		}
 		if (handled != 0) {
 			if (base == SRV6_BASE_B6_ENCAPS ||
 			    base == SRV6_BASE_B6_ENCAPS_RED)
@@ -1594,8 +1788,10 @@ srv6_execute(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
 	case SRV6_BASE_BM:
 	case SRV6_BASE_LBS:
 	case SRV6_BASE_XLBS:
+		SRV6_DEBUG("execute: base %d not supported", base);
 		return (EOPNOTSUPP);
 	default:
+		SRV6_DEBUG("execute: unknown base %d", base);
 		return (EINVAL);
 	}
 }
@@ -1615,6 +1811,7 @@ srv6_send(struct srv6_priv *priv, struct mbuf *m, const char *hookname)
 
 	hook = ng_findhook(priv->node, hookname);
 	if (hook == NULL || !NG_HOOK_IS_VALID(hook)) {
+		SRV6_DEBUG("send: hook %s not found", hookname);
 		srv6_drop(priv, m, ENOTCONN);
 		return (ENOTCONN);
 	}
@@ -1624,6 +1821,7 @@ srv6_send(struct srv6_priv *priv, struct mbuf *m, const char *hookname)
 		priv->packets_out++;
 		SRV6_UNLOCK(priv);
 	} else {
+		SRV6_DEBUG("send: NG_SEND_DATA_ONLY failed: %d", error);
 		SRV6_LOCK(priv);
 		priv->packets_dropped++;
 		priv->errors++;
@@ -1664,6 +1862,7 @@ srv6_forward_adj(struct srv6_priv *priv, struct mbuf *m, uint32_t index)
 
 	error = srv6_lookup_adj(priv, index, &adj);
 	if (error != 0) {
+		SRV6_DEBUG("forward adj: index %u not found: %d", index, error);
 		srv6_drop(priv, m, ENETUNREACH);
 		return (ENETUNREACH);
 	}
@@ -1720,6 +1919,7 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 	for (;;) {
 		error = srv6_parse_packet(m, &pkt);
 		if (error != 0) {
+			SRV6_DEBUG("process packet: parse failed: %d", error);
 			srv6_drop(priv, m, error);
 			return (error);
 		}
@@ -1730,6 +1930,7 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 			 * has already been processed locally (SRV6_ACT_CONTINUE
 			 * already decremented it).  Otherwise a non-local DA
 			 * after a continue would decrement HLIM twice. */
+			SRV6_DEBUG("process packet: no local SID for DA: %d", error);
 			if (!processed) {
 				error = srv6_decrement_hlim(m, &pkt);
 				if (error != 0) {
@@ -1742,6 +1943,7 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 
 		error = srv6_execute(priv, &m, &pkt, &sid, &res);
 		if (error != 0) {
+			SRV6_DEBUG("process packet: execute failed: %d", error);
 			srv6_drop(priv, m, error);
 			return (error);
 		}
@@ -1752,6 +1954,7 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 		switch (res.action) {
 		case SRV6_ACT_CONTINUE:
 			if (++loops > SRV6_MAX_LOOPS) {
+				SRV6_DEBUG("process packet: max loops exceeded");
 				srv6_drop(priv, m, EHOSTUNREACH);
 				return (EHOSTUNREACH);
 			}
@@ -1762,6 +1965,7 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 		case SRV6_ACT_FORWARD_ADJ:
 			return (srv6_forward_adj(priv, m, res.adj_index));
 		default:
+			SRV6_DEBUG("process packet: unknown action %d", res.action);
 			srv6_drop(priv, m, EINVAL);
 			return (EINVAL);
 		}
@@ -1816,8 +2020,10 @@ srv6_ng_newhook(__unused node_p node, hook_p hook, __unused const char *name)
 
 	hname = NG_HOOK_NAME(hook);
 	if (hname == NULL || hname[0] == '\0' ||
-	    strlen(hname) >= NG_HOOKSIZ)
+	    strlen(hname) >= NG_HOOKSIZ) {
+		SRV6_DEBUG("newhook: invalid hook name");
 		return (EINVAL);
+	}
 	return (0);
 }
 
@@ -1845,13 +2051,16 @@ srv6_ng_rcvdata(hook_p hook, item_p item)
 		NG_FREE_ITEM(item);
 		if (m != NULL)
 			m_freem(m);
+		SRV6_DEBUG("rcvdata: packet on out hook, dropping");
 		return (EINVAL);
 	}
 
 	NGI_GET_M(item, m);
 	NG_FREE_ITEM(item);
-	if (m == NULL)
+	if (m == NULL) {
+		SRV6_DEBUG("rcvdata: null mbuf");
 		return (EINVAL);
+	}
 
 	priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
 	bytes = m_length(m, NULL);
@@ -1888,13 +2097,16 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 	switch (msg->header.cmd) {
 	case NGM_SRV6_ADD_SID:
 		if (msg->header.arglen < sizeof(sidcfg)) {
+			SRV6_DEBUG("rcvmsg: addsid arglen too small");
 			error = EINVAL;
 			break;
 		}
 		memcpy(&sidcfg, msg->data, sizeof(sidcfg));
 		error = srv6_validate_sid(&sidcfg);
-		if (error != 0)
+		if (error != 0) {
+			SRV6_DEBUG("rcvmsg: addsid validate failed: %d", error);
 			break;
+		}
 
 		newsid = malloc(sizeof(*newsid), M_SRV6, M_WAITOK | M_ZERO);
 		newsid->config = sidcfg;
@@ -1917,6 +2129,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 
 	case NGM_SRV6_DEL_SID:
 		if (msg->header.arglen < sizeof(addr)) {
+			SRV6_DEBUG("rcvmsg: delsid arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -1930,14 +2143,16 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 			}
 		}
 		SRV6_UNLOCK(priv);
-		if (sid == NULL)
+		if (sid == NULL) {
+			SRV6_DEBUG("rcvmsg: delsid sid not found");
 			error = ENOENT;
-		else
+		} else
 			free(sid, M_SRV6);
 		break;
 
 	case NGM_SRV6_ADD_ADJ:
 		if (msg->header.arglen < sizeof(adjcfg)) {
+			SRV6_DEBUG("rcvmsg: addadj arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -1946,6 +2161,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		if (adjcfg.index == 0 || adjcfg.hook[0] == '\0' ||
 		    strcmp(adjcfg.hook, NG_SRV6_HOOK_IN) == 0 ||
 		    strcmp(adjcfg.hook, NG_SRV6_HOOK_OUT) == 0) {
+			SRV6_DEBUG("rcvmsg: addadj invalid config");
 			error = EINVAL;
 			break;
 		}
@@ -1970,6 +2186,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 
 	case NGM_SRV6_DEL_ADJ:
 		if (msg->header.arglen < sizeof(index)) {
+			SRV6_DEBUG("rcvmsg: deladj arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -1983,14 +2200,16 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 			}
 		}
 		SRV6_UNLOCK(priv);
-		if (adj == NULL)
+		if (adj == NULL) {
+			SRV6_DEBUG("rcvmsg: deladj index %u not found", index);
 			error = ENOENT;
-		else
+		} else
 			free(adj, M_SRV6);
 		break;
 
 	case NGM_SRV6_SET_SRC:
 		if (msg->header.arglen < sizeof(addr)) {
+			SRV6_DEBUG("rcvmsg: setsrc arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -2015,6 +2234,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		SRV6_UNLOCK(priv);
 		NG_MKRESPONSE(resp, msg, sizeof(stats), M_NOWAIT);
 		if (resp == NULL) {
+			SRV6_DEBUG("rcvmsg: getstats out of memory");
 			error = ENOMEM;
 			break;
 		}
@@ -2023,6 +2243,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 
 	case NGM_SRV6_GET_SID:
 		if (msg->header.arglen < sizeof(addr)) {
+			SRV6_DEBUG("rcvmsg: getsid arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -2041,11 +2262,13 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		}
 		SRV6_UNLOCK(priv);
 		if (found == 0) {
+			SRV6_DEBUG("rcvmsg: getsid sid not found");
 			error = ENOENT;
 			break;
 		}
 		NG_MKRESPONSE(resp, msg, sizeof(sinfo), M_NOWAIT);
 		if (resp == NULL) {
+			SRV6_DEBUG("rcvmsg: getsid out of memory");
 			error = ENOMEM;
 			break;
 		}
@@ -2054,6 +2277,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 
 	case NGM_SRV6_GET_ADJ:
 		if (msg->header.arglen < sizeof(index)) {
+			SRV6_DEBUG("rcvmsg: getadj arglen too small");
 			error = EINVAL;
 			break;
 		}
@@ -2072,11 +2296,13 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		}
 		SRV6_UNLOCK(priv);
 		if (found == 0) {
+			SRV6_DEBUG("rcvmsg: getadj index %u not found", index);
 			error = ENOENT;
 			break;
 		}
 		NG_MKRESPONSE(resp, msg, sizeof(ainfo), M_NOWAIT);
 		if (resp == NULL) {
+			SRV6_DEBUG("rcvmsg: getadj out of memory");
 			error = ENOMEM;
 			break;
 		}
@@ -2102,6 +2328,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		break;
 
 	default:
+		SRV6_DEBUG("rcvmsg: unknown command %u", msg->header.cmd);
 		error = EINVAL;
 		break;
 	}
@@ -2122,8 +2349,10 @@ srv6_decapsulate(struct mbuf *m, int offset)
 	int mlen;
 
 	mlen = m_length(m, NULL);
-	if (offset <= 0 || offset >= mlen)
+	if (offset <= 0 || offset >= mlen) {
+		SRV6_DEBUG("decapsulate: invalid offset %d", offset);
 		return (EINVAL);
+	}
 	m_adj(m, offset);
 	return (0);
 }
@@ -2142,18 +2371,24 @@ srv6_encapsulate(struct mbuf **mp, const struct in6_addr *src,
 
 	if (mp == NULL || (m = *mp) == NULL || src == NULL || dst == NULL ||
 	    segments == NULL || nsegments == 0 ||
-	    nsegments > SRV6_MAX_SEGMENTS)
+	    nsegments > SRV6_MAX_SEGMENTS) {
+		SRV6_DEBUG("encapsulate: invalid arguments");
 		return (EINVAL);
-	if ((m->m_flags & M_PKTHDR) == 0)
+	}
+	if ((m->m_flags & M_PKTHDR) == 0) {
+		SRV6_DEBUG("encapsulate: mbuf without packet header");
 		return (EINVAL);
+	}
 
 	m_copydata(m, 0, 1, &v);
 	if ((v >> 4) == 6)
 		inner_nxt = IPPROTO_IPV6;
 	else if ((v >> 4) == 4)
 		inner_nxt = IPPROTO_IPV4;
-	else
+	else {
+		SRV6_DEBUG("encapsulate: unsupported IP version %u", v >> 4);
 		return (EAFNOSUPPORT);
+	}
 
 	srh_sids = reduced != 0 ? nsegments - 1 : nsegments;
 	if (srh_sids == 0)
@@ -2165,8 +2400,10 @@ srv6_encapsulate(struct mbuf **mp, const struct in6_addr *src,
 	old_len = m_length(m, NULL);
 
 	hdr = m_get2(outer_len, M_NOWAIT, MT_DATA, M_PKTHDR);
-	if (hdr == NULL)
+	if (hdr == NULL) {
+		SRV6_DEBUG("encapsulate: out of memory");
 		return (ENOMEM);
+	}
 	m_move_pkthdr(hdr, m);
 	hdr->m_next = m;
 	hdr->m_len = outer_len;

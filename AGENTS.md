@@ -47,6 +47,10 @@ Passwordless `sudo` being available is not permission to load it.
   to avoid double-decrementing HLIM.
 - `srv6_forward_adj()` calls `srv6_adj_account()` to update per-adjacency
   packet/byte counters.
+- `SRV6_DEBUG()` macro gates `printf` on `bootverbose` (declared in
+  `<sys/systm.h>`, already included by `srv6.c`); every error return path in
+  `srv6.c` now calls `SRV6_DEBUG()` so diagnostics print only when the kernel
+  is booted with `-v` / `boot_verbose="YES"`.
 
 ## Build
 
