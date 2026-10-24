@@ -1,4 +1,4 @@
-# Makefile for the example test kernel module.
+# Makefile for the SRv6 test kernel module.
 #
 # Follows the pattern from /usr/src/sys/modules/tests/fib_lookup/Makefile:
 #   - Set SYSDIR to the kernel source sys/ directory

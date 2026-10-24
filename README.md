@@ -1,147 +1,134 @@
-# FreeBSD Out-of-Tree Kernel Module Boilerplate
+# SRv6 netgraph node
 
-A boilerplate for building FreeBSD kernel modules out-of-tree, following
-the conventions used by in-tree modules under /usr/src/sys/modules.
+SRv6 (Segment Routing over IPv6) implemented as an out-of-tree FreeBSD kernel
+module. It is a netgraph node type named `srv6` that processes IPv6 packets
+carrying a Segment Routing Header (SRH) per [RFC 8754](doc/rfc8754.txt), and
+implements the SRv6 endpoint behaviors defined in [RFC 8986](doc/rfc8986.txt)
+with [RFC 9602](doc/rfc9602.txt) SID addressing and
+[RFC 9800](doc/rfc9800.txt) compressed SID (CSID) flavors.
 
-## Project Structure
-
-```
-.
-├── Makefile          # Build file using bsd.kmod.mk
-├── example.c         # Sample kernel module source
-├── example.h         # Sample header (shared declarations)
-├── .gitignore        # Git ignore rules
-└── README.md         # This file
-```
-
-## Prerequisites
-
-- FreeBSD source tree at `/usr/src` (or set `SYSDIR` to another location)
-- Build tools: `make`, `clang`/`gcc`, `ld`
-
-## Building
+## Build
 
 ```sh
-# Build the module (.ko file)
-make
-
-# Install to /boot/kernel (as root)
-make install
-
-# Load the module
-make load
-
-# Unload the module
-make unload
-
-# Reload (unload then load)
-make reload
-
-# Clean build artifacts
-make clean
+make                    # builds ./srv6.ko
+make -C tests           # builds tests/module/test_srv6.ko
 ```
 
-## Variables You Can Override
+- Override `SYSDIR=/path/to/sys` if the kernel source is not at `/usr/src/sys`.
+- `-Werror` is enabled; mark unused parameters `__unused`.
+- Building works unprivileged. **Never load or unload the module** (see
+  [Hard rule](#hard-rule)).
+- There is no test runner. Minimum verification is `make` and
+  `make -C tests`. Do not attempt runtime validation by loading.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `KMOD` | Kernel module name | `example` |
-| `SRCS` | Source files to compile | `example.c` |
-| `SYSDIR` | Path to kernel `sys/` directory | `/usr/src/sys` |
-| `SRCTOP` | Path to kernel source root | `${SYSDIR}/..` |
-| `KERNBUILDDIR` | Path to kernel build dir (for `opt_*.h`) | Not set |
-| `DESTDIR` | Install target root directory | `/` |
-| `KMODDIR` | Install directory for `.ko` | `/boot/kernel` |
-| `EXPORT_SYMS` | `YES`, a filename, or `NO` | `NO` |
+## Hard rule
 
-Example:
-```sh
-make KMOD=mydrv SRCS="mydrv.c helper.c" SYSDIR=/usr/src/sys
-```
+**DO NOT LOAD THE FUCKING KERNEL MODULE.**
 
-## How It Works
+Do not run `make load`, `make unload`, `make reload`, `kldload`, `kldunload`,
+or `ngctl` against this module unless the user explicitly asks. Build and
+inspect only. Loading a broken kernel module can panic or destabilize the host.
+Passwordless `sudo` being available is not permission to load it.
 
-1. `SYSDIR` points at your kernel source `sys/` directory.
-2. `kern.opts.mk` is included so `KERN_OPTS` and `opt_*.h` handling work
-   the same as in-tree builds.
-3. `KMOD`, `SRCS`, and `EXPORT_SYMS` are set.
-4. `<bsd.kmod.mk>` (from `/usr/share/mk`) pulls in
-   `/usr/src/sys/conf/kmod.mk` and provides all compiler/linker flags,
-   the `.ko` link step, and `install`/`load`/`unload`/`reload` targets.
+## Netgraph API
 
-For details, see `/usr/share/mk/bsd.kmod.mk` and
-`/usr/src/sys/conf/kmod.mk`.
+The node type is registered as `NG_SRV6_NODE_TYPE` (`"srv6"`).
 
-## Writing Your Module
+### Hooks
 
-Replace `example.c` with your driver. A minimal module:
+- `"in"` (`NG_SRV6_HOOK_IN`): default ingress hook. IPv6 packets received
+  here are parsed and processed through the SRv6 data path.
+- `"out"` (`NG_SRV6_HOOK_OUT`): default egress hook. Packets that resolve to
+  `SRV6_ACT_FORWARD_OUT` are sent out this hook.
+- Additional hooks may be created and named in adjacency entries; they are
+  used by `End.X` and `End.DX*` behaviors to forward to a specific next hop.
 
-```c
-#include <sys/param.h>
-#include <sys/module.h>
-#include <sys/kernel.h>
-#include <sys/systm.h>
+### Control messages (`ngctl`)
 
-static int
-example_modevent(module_t mod __unused, int type, void *data __unused)
-{
-	int error = 0;
+All messages use cookie `NG_SRV6_COOKIE` (`0x53525636`, `"SRV6"`).
 
-	switch (type) {
-	case MOD_LOAD:
-		uprintf("example module loaded\n");
-		break;
-	case MOD_UNLOAD:
-		uprintf("example module unloaded\n");
-		break;
-	default:
-		error = EOPNOTSUPP;
-		break;
-	}
+| Command | `ngctl` name | Argument | Response | Description |
+|---------|--------------|----------|----------|-------------|
+| `NGM_SRV6_ADD_SID` | `addsid` | `srv6_sid_config` | — | Add or replace a local SID |
+| `NGM_SRV6_DEL_SID` | `delsid` | IPv6 address | — | Remove a local SID |
+| `NGM_SRV6_ADD_ADJ` | `addadj` | `srv6_adj_config` | — | Add or replace an L3 adjacency |
+| `NGM_SRV6_DEL_ADJ` | `deladj` | `uint32` (index) | — | Remove an adjacency |
+| `NGM_SRV6_SET_SRC` | `setsrc` | IPv6 address | — | Set default encapsulation source |
+| `NGM_SRV6_GET_STATS` | `getstats` | — | `srv6_stats` | Get node statistics |
+| `NGM_SRV6_GET_SID` | `getsid` | IPv6 address | `srv6_sid_info` | Get one local SID |
+| `NGM_SRV6_GET_ADJ` | `getadj` | `uint32` (index) | `srv6_adj_info` | Get one adjacency |
+| `NGM_SRV6_CLR_STATS` | `clrstats` | — | — | Clear all statistics |
 
-	return (error);
-}
+### Data structures
 
-static moduledata_t example_mod = {
-	"example",
-	example_modevent,
-	NULL
-};
+Defined in `srv6.h`:
 
-DECLARE_MODULE(example, example_mod, SI_SUB_DRIVERS, SI_ORDER_MIDDLE);
-MODULE_VERSION(example, 1);
-```
+- `struct srv6_sid_config` — local SID configuration (address, IANA behavior
+  codepoint, CSID layout lengths, adjacency index, FIB tables, segment list,
+  source address).
+- `struct srv6_adj_config` — L3 adjacency (nexthop, index, FIB table, hook
+  name).
+- `struct srv6_stats` — node counters (`packets_in`, `packets_out`,
+  `packets_dropped`, `bytes_in`, `errors`, `sids`, `adjs`).
+- `struct srv6_sid_info` / `struct srv6_adj_info` — per-SID/per-adjacency
+  counters returned by `GET_SID`/`GET_ADJ`.
 
-The first argument to `DECLARE_MODULE` must match your `KMOD` name.
-Use `__unused` on unused parameters — the build uses `-Werror`.
+### Behavior support
 
-## Testing
+IANA endpoint behavior codepoints (from RFC 8986 Section 10.2 and RFC 9800
+Section 12.1) are decoded in `srv6_behavior_decode()`. The base behaviors
+implemented are:
 
-ATF tests for kernel modules follow the in-tree pattern under
-`/usr/src/sys/modules/tests/`:
+- `End` (codepoint 1)
+- `End.X` (codepoint 5)
+- `End.T` (codepoint 9)
+- `End.B6.Encaps` (codepoint 14)
+- `End.BM` (codepoint 15)
+- `End.DX6` (codepoint 16)
+- `End.DX4` (codepoint 17)
+- `End.DT6` (codepoint 18)
+- `End.DT4` (codepoint 19)
+- `End.DT46` (codepoint 20)
+- `End.DX2` (codepoint 21)
+- `End.DX2V` (codepoint 22)
+- `End.DT2U` (codepoint 23)
+- `End.DT2M` (codepoint 24)
+- `End.B6.Encaps.Red` (codepoint 27)
 
-```
-tests/
-├── Makefile          # Test directory makefile (bsd.subdir.mk)
-└── module/
-    ├── Makefile      # Test makefile (bsd.kmod.mk)
-    └── test_example.c # Test kernel module source
-```
+Flavor bits (`PSP`, `USP`, `USD`, `NEXT-CSID`, `REPLACE-CSID`) are decoded
+from the codepoint as described in RFC 8986 and RFC 9800. See
+`srv6_behavior_decode()` for the full mapping.
 
-The `tests/module/` directory builds a test kernel module (`test_example.ko`)
-that can be loaded and then verified with an ATF test program. The ATF test
-programs live in `/usr/src/tests/sys/kern/` (e.g., `module_test.c`) and use
-functions like `modfind()`, `modnext()`, and `modstat()` to verify module
-behavior.
+### Known gaps / limitations
 
-To build the test module:
+- Transit packets are dropped unless a matching local SID is found.
+- `srv6_parse_srh()` and `srv6_encapsulate()` are defined but not fully
+  integrated into the data path.
+- `srv6_cmdlist[]` exists but the `NGM_SRV6_*` handlers are partially
+  implemented; SIDs and adjacencies can be added/removed via `ngctl`.
+- `srv6_ng_newhook()` accepts any hook name; `"out"` and `"ctl"` are not
+  fully wired up to separate pipelines.
+- `End.BM`, `End.LBS`, `End.XLBS`, `End.DX2V`, `End.DT2U`, `End.DT2M` return
+  `EOPNOTSUPP`.
 
-```sh
-make -C tests
-```
+## Reference material
 
-This produces `tests/module/test_example.ko` which can be loaded with
-`kldload` and tested.
+- `doc/rfc8754.txt` — IPv6 Segment Routing Header (SRH)
+- `doc/rfc8986.txt` — SRv6 Network Programming endpoint behaviors
+- `doc/rfc9602.txt` — SID addressing architecture
+- `doc/rfc9800.txt` — Compressed SID (CSID) flavors
+- `doc/ng/*.4` — netgraph API man pages
+
+## Style
+
+- FreeBSD KNF: hard tabs, 8-column indent, 80 columns, K&R braces. Match
+  surrounding code; do not reformat unrelated lines.
+- `.clang-format` is currently unusable: `IndentCaseLabels` is duplicated, and
+  `UseTab: Never` contradicts the rest of the config. Fix the config before
+  running `clang-format`.
+- New files use the BSD-2-Clause SPDX header copied from existing sources.
+- Keep `KMOD` (`srv6`) in sync with `DECLARE_MODULE`, and add new `.c` files to
+  `SRCS` in the root `Makefile`.
 
 ## License
 

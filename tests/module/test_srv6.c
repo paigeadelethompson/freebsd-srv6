@@ -26,14 +26,45 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _EXAMPLE_H_
-#define _EXAMPLE_H_
-
 /*
- * Place shared declarations, structure definitions, or inline functions
- * used by multiple source files in this module here.
- *
- * For a single-file module, this header may be removed entirely.
+ * Test kernel module for the SRv6 netgraph driver.
+ * Provides a module that can be found via modfind("test_srv6").
  */
 
-#endif /* _EXAMPLE_H_ */
+#include <sys/param.h>
+#include <sys/module.h>
+#include <sys/kernel.h>
+#include <sys/systm.h>
+
+/*
+ * Test kernel module for ATF testing.
+ */
+static int
+test_srv6_modevent(module_t mod __unused, int type, void *data __unused)
+{
+	int error = 0;
+
+	switch (type) {
+	case MOD_LOAD:
+		uprintf("test_srv6: module loaded\n");
+		break;
+	case MOD_UNLOAD:
+		uprintf("test_srv6: module unloaded\n");
+		break;
+	default:
+		error = EOPNOTSUPP;
+		break;
+	}
+
+	return (error);
+}
+
+static moduledata_t test_srv6_mod = {
+	"test_srv6",
+	test_srv6_modevent,
+	NULL
+};
+
+DECLARE_MODULE(test_srv6, test_srv6_mod, SI_SUB_DRIVERS,
+    SI_ORDER_MIDDLE);
+MODULE_VERSION(test_srv6, 1);

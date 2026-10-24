@@ -17,27 +17,36 @@ Passwordless `sudo` being available is not permission to load it.
 ## Project goals
 
 - Finish the driver: control plane, data path, and real tests.
-- Remove the leftover boilerplate (`example.c`, `example.h`,
-  `tests/module/test_example.c`) and replace the boilerplate `README.md` with
-  real SRv6 documentation.
 - Reference material: `doc/rfc8754.txt` (SRH), `doc/rfc8986.txt` (endpoint
   behaviors), `doc/rfc9602.txt` (SID addressing), `doc/rfc9800.txt`
   (compressed SID), and `doc/ng/*.4` (netgraph APIs).
 
 ## Current state / known gaps
 
-- `srv6.c` and `srv6.h` are the real module. `README.md` and `example.*` still
-  describe the original generic kmod boilerplate.
+- `srv6.c` and `srv6.h` are the real module. Boilerplate `example.c`,
+  `example.h`, and `tests/module/test_example.c` have been removed.
+- `README.md` documents the netgraph API, hooks, behavior support, and
+  limitations.
 - The comment at the top of `srv6.c` overstates completeness. Only branches for
   `End`, `End.X`, `End.DX6`, and `End.DX4` exist, and they are incomplete.
   Transit packets are dropped; `srv6_parse_srh()` and `srv6_encapsulate()` are
   defined but never called; encapsulation has no segment list.
-- `srv6_cmdlist[]` is empty and every `NGM_SRV6_*` case in `srv6_ng_rcvmsg()`
-  is a TODO, so SIDs/adjacencies cannot be configured with `ngctl` yet.
+- `srv6_cmdlist[]` is populated and `NGM_SRV6_*` handlers are implemented, so
+  SIDs and adjacencies can be configured with `ngctl`.
 - `srv6_ng_newhook()` accepts any hook name, and `srv6_ng_rcvdata()` runs the
   same pipeline for every hook. `"out"` and `"ctl"` are not wired up.
 - `tests/module/test_srv6.c` only loads/unloads. There is no ATF test or
   automated test target.
+
+## Applied fixes
+
+- `srv6_adj_config.hook` already uses `ng_parse_fixedstring_type` with
+  `NG_HOOKSIZ` (not `ng_parse_string_type`).
+- `srv6_process_packet()` tracks whether a packet was already locally
+  processed and skips the transit hop-limit decrement after `SRV6_ACT_CONTINUE`
+  to avoid double-decrementing HLIM.
+- `srv6_forward_adj()` calls `srv6_adj_account()` to update per-adjacency
+  packet/byte counters.
 
 ## Build
 
