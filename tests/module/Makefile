@@ -10,7 +10,7 @@
 
 SYSDIR?=	/usr/src/sys
 
-KMOD=		test_example
-SRCS=		test_example.c
+KMOD=		test_srv6
+SRCS=		test_srv6.c
 
 .include <bsd.kmod.mk>

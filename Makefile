@@ -28,8 +28,8 @@ SRCTOP?=	${SYSDIR}/..
 
 .include "${SYSDIR}/conf/kern.opts.mk"
 
-KMOD?=		example
-SRCS?=		example.c
+KMOD?=		srv6
+SRCS?=		srv6.c srv6.h
 
 EXPORT_SYMS?=	NO
 
