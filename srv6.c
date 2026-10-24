@@ -50,37 +50,39 @@
 
 MALLOC_DEFINE(M_SRV6, "srv6", "SRv6 netgraph node");
 
-#define	IP6_OFF_PLEN		4
-#define	IP6_OFF_NXT		6
-#define	IP6_OFF_HLIM		7
-#define	IP6_OFF_SRC		8
-#define	IP6_OFF_DST		24
+#define IP6_OFF_PLEN	  4
+#define IP6_OFF_NXT	  6
+#define IP6_OFF_HLIM	  7
+#define IP6_OFF_SRC	  8
+#define IP6_OFF_DST	  24
 
-#define	SRV6_LOCK(priv)		mtx_lock(&(priv)->lock)
-#define	SRV6_UNLOCK(priv)	mtx_unlock(&(priv)->lock)
+#define SRV6_LOCK(priv)	  mtx_lock(&(priv)->lock)
+#define SRV6_UNLOCK(priv) mtx_unlock(&(priv)->lock)
 
 /*
  * Debug trace for every error path.  Only prints when bootverbose is set,
  * so it is silent in normal operation.
  */
-#define	SRV6_DEBUG(fmt, ...)	do {					\
-	if (bootverbose)						\
-		printf("srv6: %s: " fmt "\n", __func__, ##__VA_ARGS__);	\
-} while (0)
+#define SRV6_DEBUG(fmt, ...)                                    \
+	do {                                                    \
+		if (bootverbose)                                \
+			printf("srv6: %s: " fmt "\n", __func__, \
+			    ##__VA_ARGS__);                     \
+	} while (0)
 
 /*
  * Internal packet description.  The flexible-array SRH definition is used
  * for the on-wire structure; a fixed-size copy is kept here.
  */
 struct srv6_pkt {
-	struct ip6_hdr		ip6;
-	int			mlen;
-	int			outer_len;
-	int			upper_nxt;
-	int			srh_off;
-	int			srh_len;
-	int			srh_prev_off;
-	struct srv6_srh_hdr	srh;
+	struct ip6_hdr ip6;
+	int mlen;
+	int outer_len;
+	int upper_nxt;
+	int srh_off;
+	int srh_len;
+	int srh_prev_off;
+	struct srv6_srh_hdr srh;
 };
 
 enum srv6_base_behavior {
@@ -111,91 +113,89 @@ enum srv6_action {
 };
 
 struct srv6_result {
-	enum srv6_action	action;
-	uint32_t		fib_table;
-	uint32_t		adj_index;
+	enum srv6_action action;
+	uint32_t fib_table;
+	uint32_t adj_index;
 };
 
 /* Netgraph methods. */
-static ng_constructor_t	srv6_ng_constructor;
-static ng_rcvmsg_t	srv6_ng_rcvmsg;
-static ng_shutdown_t	srv6_ng_shutdown;
-static ng_newhook_t	srv6_ng_newhook;
-static ng_rcvdata_t	srv6_ng_rcvdata;
-static ng_disconnect_t	srv6_ng_disconnect;
+static ng_constructor_t srv6_ng_constructor;
+static ng_rcvmsg_t srv6_ng_rcvmsg;
+static ng_shutdown_t srv6_ng_shutdown;
+static ng_newhook_t srv6_ng_newhook;
+static ng_rcvdata_t srv6_ng_rcvdata;
+static ng_disconnect_t srv6_ng_disconnect;
 
 /* Parse helpers. */
-static int	srv6_ip6_parse(const struct ng_parse_type *, const char *, int *,
-		    const u_char *, u_char *, int *);
-static int	srv6_ip6_unparse(const struct ng_parse_type *, const u_char *,
-		    int *, char *, int);
-static int	srv6_ip6_getDefault(const struct ng_parse_type *, const u_char *,
-		    u_char *, int *);
-static int	srv6_ip6_getAlign(const struct ng_parse_type *);
+static int srv6_ip6_parse(const struct ng_parse_type *, const char *, int *,
+    const u_char *, u_char *, int *);
+static int srv6_ip6_unparse(const struct ng_parse_type *, const u_char *, int *,
+    char *, int);
+static int srv6_ip6_getDefault(const struct ng_parse_type *, const u_char *,
+    u_char *, int *);
+static int srv6_ip6_getAlign(const struct ng_parse_type *);
 
 /* Control and table helpers. */
-static int	srv6_validate_sid(const struct srv6_sid_config *);
-static int	srv6_lookup_adj(struct srv6_priv *, uint32_t,
-		    struct srv6_adj_config *);
-static int	srv6_behavior_decode(uint16_t, enum srv6_base_behavior *,
-		    uint32_t *);
-static int	srv6_csid_layout(const struct srv6_sid_config *, uint32_t,
-		    int *, int *, int *);
-static int	srv6_pick_src(struct srv6_priv *, const struct srv6_sid_config *,
-		    const struct srv6_pkt *, struct in6_addr *);
+static int srv6_validate_sid(const struct srv6_sid_config *);
+static int srv6_lookup_adj(struct srv6_priv *, uint32_t,
+    struct srv6_adj_config *);
+static int srv6_behavior_decode(uint16_t, enum srv6_base_behavior *,
+    uint32_t *);
+static int srv6_csid_layout(const struct srv6_sid_config *, uint32_t, int *,
+    int *, int *);
+static int srv6_pick_src(struct srv6_priv *, const struct srv6_sid_config *,
+    const struct srv6_pkt *, struct in6_addr *);
 
 /* Packet and SRH helpers. */
-static int	srv6_parse_packet(struct mbuf *, struct srv6_pkt *);
-static int	srv6_srh_valid(const struct srv6_pkt *);
-static int	srv6_get_segment(struct mbuf *, const struct srv6_pkt *, int,
-		    void *);
-static int	srv6_update_da(struct mbuf *, struct srv6_pkt *, const void *);
-static int	srv6_update_sl(struct mbuf *, struct srv6_pkt *, int);
-static int	srv6_decrement_hlim(struct mbuf *, struct srv6_pkt *);
-static int	srv6_pop_srh(struct mbuf *, struct srv6_pkt *);
+static int srv6_parse_packet(struct mbuf *, struct srv6_pkt *);
+static int srv6_srh_valid(const struct srv6_pkt *);
+static int srv6_get_segment(struct mbuf *, const struct srv6_pkt *, int,
+    void *);
+static int srv6_update_da(struct mbuf *, struct srv6_pkt *, const void *);
+static int srv6_update_sl(struct mbuf *, struct srv6_pkt *, int);
+static int srv6_decrement_hlim(struct mbuf *, struct srv6_pkt *);
+static int srv6_pop_srh(struct mbuf *, struct srv6_pkt *);
 
 /* Behavior execution. */
-static int	srv6_execute(struct srv6_priv *, struct mbuf **,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    struct srv6_result *);
-static int	srv6_process_end(struct srv6_priv *, struct mbuf *,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    enum srv6_base_behavior, uint32_t, struct srv6_result *);
-static int	srv6_process_upper(struct srv6_priv *, struct mbuf *,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    enum srv6_base_behavior, uint32_t, struct srv6_result *);
-static int	srv6_process_decap(struct srv6_priv *, struct mbuf *,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    enum srv6_base_behavior, struct srv6_result *);
-static int	srv6_decap_and_forward(struct srv6_priv *, struct mbuf *,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    enum srv6_base_behavior, struct srv6_result *);
-static int	srv6_process_b6(struct srv6_priv *, struct mbuf **,
-		    struct srv6_pkt *, const struct srv6_sid_config *,
-		    enum srv6_base_behavior, uint32_t, struct srv6_result *,
-		    int);
-static int	srv6_csid_process(struct mbuf *, struct srv6_pkt *,
-		    const struct srv6_sid_config *, uint32_t, int *, int *);
+static int srv6_execute(struct srv6_priv *, struct mbuf **, struct srv6_pkt *,
+    const struct srv6_sid_config *, struct srv6_result *);
+static int srv6_process_end(struct srv6_priv *, struct mbuf *,
+    struct srv6_pkt *, const struct srv6_sid_config *, enum srv6_base_behavior,
+    uint32_t, struct srv6_result *);
+static int srv6_process_upper(struct srv6_priv *, struct mbuf *,
+    struct srv6_pkt *, const struct srv6_sid_config *, enum srv6_base_behavior,
+    uint32_t, struct srv6_result *);
+static int srv6_process_decap(struct srv6_priv *, struct mbuf *,
+    struct srv6_pkt *, const struct srv6_sid_config *, enum srv6_base_behavior,
+    struct srv6_result *);
+static int srv6_decap_and_forward(struct srv6_priv *, struct mbuf *,
+    struct srv6_pkt *, const struct srv6_sid_config *, enum srv6_base_behavior,
+    struct srv6_result *);
+static int srv6_process_b6(struct srv6_priv *, struct mbuf **,
+    struct srv6_pkt *, const struct srv6_sid_config *, enum srv6_base_behavior,
+    uint32_t, struct srv6_result *, int);
+static int srv6_csid_process(struct mbuf *, struct srv6_pkt *,
+    const struct srv6_sid_config *, uint32_t, int *, int *);
 
 /* Bit helpers for compressed SIDs. */
-static int	srv6_bit(const uint8_t *, int);
-static int	srv6_bits_nonzero(const uint8_t *, int, int);
-static uint64_t	srv6_get_bits64(const uint8_t *, int, int);
-static void	srv6_copy_bits(uint8_t *, int, const uint8_t *, int, int);
-static void	srv6_zero_bits(uint8_t *, int, int);
-static void	srv6_put_bits64(uint8_t *, int, int, uint64_t);
-static int	srv6_log2ceil(int);
-static void	srv6_csid_build(uint8_t *, const uint8_t *, const uint8_t *, int,
-		    int, int, int, int);
+static int srv6_bit(const uint8_t *, int);
+static int srv6_bits_nonzero(const uint8_t *, int, int);
+static uint64_t srv6_get_bits64(const uint8_t *, int, int);
+static void srv6_copy_bits(uint8_t *, int, const uint8_t *, int, int);
+static void srv6_zero_bits(uint8_t *, int, int);
+static void srv6_put_bits64(uint8_t *, int, int, uint64_t);
+static int srv6_log2ceil(int);
+static void srv6_csid_build(uint8_t *, const uint8_t *, const uint8_t *, int,
+    int, int, int, int);
 
 /* Forwarding and accounting. */
-static int	srv6_send(struct srv6_priv *, struct mbuf *, const char *);
-static int	srv6_forward_out(struct srv6_priv *, struct mbuf *, uint32_t);
-static int	srv6_forward_adj(struct srv6_priv *, struct mbuf *, uint32_t);
-static void	srv6_set_fib(struct mbuf *, uint32_t);
-static void	srv6_drop(struct srv6_priv *, struct mbuf *, int);
-static void	srv6_sid_account(struct srv6_priv *, const struct in6_addr *,
-		    uint64_t);
+static int srv6_send(struct srv6_priv *, struct mbuf *, const char *);
+static int srv6_forward_out(struct srv6_priv *, struct mbuf *, uint32_t);
+static int srv6_forward_adj(struct srv6_priv *, struct mbuf *, uint32_t);
+static void srv6_set_fib(struct mbuf *, uint32_t);
+static void srv6_drop(struct srv6_priv *, struct mbuf *, int);
+static void srv6_sid_account(struct srv6_priv *, const struct in6_addr *,
+    uint64_t);
 
 /*
  * IPv6 address parse type.  netgraph has an IPv4 type but no IPv6 type.
@@ -228,8 +228,8 @@ srv6_ip6_parse(__unused const struct ng_parse_type *type, const char *s,
 }
 
 static int
-srv6_ip6_unparse(__unused const struct ng_parse_type *type,
-    const u_char *data, int *off, char *cbuf, int cbuflen)
+srv6_ip6_unparse(__unused const struct ng_parse_type *type, const u_char *data,
+    int *off, char *cbuf, int cbuflen)
 {
 	char tmp[INET6_ADDRSTRLEN];
 
@@ -262,30 +262,20 @@ srv6_ip6_getAlign(__unused const struct ng_parse_type *type)
 	return (4);
 }
 
-static const struct ng_parse_type srv6_ip6_type = {
-	NULL,
-	NULL,
-	NULL,
-	srv6_ip6_parse,
-	srv6_ip6_unparse,
-	srv6_ip6_getDefault,
-	srv6_ip6_getAlign
-};
+static const struct ng_parse_type srv6_ip6_type = { NULL, NULL, NULL,
+	srv6_ip6_parse, srv6_ip6_unparse, srv6_ip6_getDefault,
+	srv6_ip6_getAlign };
 
 static const struct ng_parse_fixedarray_info srv6_segments_info = {
-	&srv6_ip6_type,
-	SRV6_MAX_SEGMENTS,
-	NULL
+	&srv6_ip6_type, SRV6_MAX_SEGMENTS, NULL
 };
 
 static const struct ng_parse_type srv6_segments_type = {
-	&ng_parse_fixedarray_type,
-	&srv6_segments_info
+	&ng_parse_fixedarray_type, &srv6_segments_info
 };
 
 static const struct ng_parse_struct_field srv6_sid_config_fields[] = {
-	{ "addr", &srv6_ip6_type },
-	{ "behavior", &ng_parse_uint16_type },
+	{ "addr", &srv6_ip6_type }, { "behavior", &ng_parse_uint16_type },
 	{ "loc_len", &ng_parse_uint8_type },
 	{ "funct_len", &ng_parse_uint8_type },
 	{ "arg_len", &ng_parse_uint8_type },
@@ -294,37 +284,27 @@ static const struct ng_parse_struct_field srv6_sid_config_fields[] = {
 	{ "fib_table", &ng_parse_uint32_type },
 	{ "fib_table4", &ng_parse_uint32_type },
 	{ "nsegments", &ng_parse_uint16_type },
-	{ "reserved2", &ng_parse_uint16_type },
-	{ "src_addr", &srv6_ip6_type },
-	{ "segments", &srv6_segments_type },
-	{ NULL }
+	{ "reserved2", &ng_parse_uint16_type }, { "src_addr", &srv6_ip6_type },
+	{ "segments", &srv6_segments_type }, { NULL }
 };
 
 static const struct ng_parse_type srv6_sid_config_type = {
-	&ng_parse_struct_type,
-	&srv6_sid_config_fields
+	&ng_parse_struct_type, &srv6_sid_config_fields
 };
 
-static const struct ng_parse_fixedstring_info srv6_hook_info = {
-	NG_HOOKSIZ
-};
+static const struct ng_parse_fixedstring_info srv6_hook_info = { NG_HOOKSIZ };
 
-static const struct ng_parse_type srv6_hook_type = {
-	&ng_parse_fixedstring_type,
-	&srv6_hook_info
-};
+static const struct ng_parse_type srv6_hook_type = { &ng_parse_fixedstring_type,
+	&srv6_hook_info };
 
 static const struct ng_parse_struct_field srv6_adj_config_fields[] = {
-	{ "nexthop", &srv6_ip6_type },
-	{ "index", &ng_parse_uint32_type },
-	{ "fib_table", &ng_parse_uint32_type },
-	{ "hook", &srv6_hook_type },
+	{ "nexthop", &srv6_ip6_type }, { "index", &ng_parse_uint32_type },
+	{ "fib_table", &ng_parse_uint32_type }, { "hook", &srv6_hook_type },
 	{ NULL }
 };
 
 static const struct ng_parse_type srv6_adj_config_type = {
-	&ng_parse_struct_type,
-	&srv6_adj_config_fields
+	&ng_parse_struct_type, &srv6_adj_config_fields
 };
 
 static const struct ng_parse_struct_field srv6_stats_fields[] = {
@@ -332,109 +312,50 @@ static const struct ng_parse_struct_field srv6_stats_fields[] = {
 	{ "packets_out", &ng_parse_uint64_type },
 	{ "packets_dropped", &ng_parse_uint64_type },
 	{ "bytes_in", &ng_parse_uint64_type },
-	{ "errors", &ng_parse_uint64_type },
-	{ "sids", &ng_parse_uint64_type },
-	{ "adjs", &ng_parse_uint64_type },
-	{ NULL }
+	{ "errors", &ng_parse_uint64_type }, { "sids", &ng_parse_uint64_type },
+	{ "adjs", &ng_parse_uint64_type }, { NULL }
 };
 
-static const struct ng_parse_type srv6_stats_type = {
-	&ng_parse_struct_type,
-	&srv6_stats_fields
-};
+static const struct ng_parse_type srv6_stats_type = { &ng_parse_struct_type,
+	&srv6_stats_fields };
 
 static const struct ng_parse_struct_field srv6_sid_info_fields[] = {
 	{ "config", &srv6_sid_config_type },
 	{ "packets", &ng_parse_uint64_type },
-	{ "bytes", &ng_parse_uint64_type },
-	{ NULL }
+	{ "bytes", &ng_parse_uint64_type }, { NULL }
 };
 
-static const struct ng_parse_type srv6_sid_info_type = {
-	&ng_parse_struct_type,
-	&srv6_sid_info_fields
-};
+static const struct ng_parse_type srv6_sid_info_type = { &ng_parse_struct_type,
+	&srv6_sid_info_fields };
 
 static const struct ng_parse_struct_field srv6_adj_info_fields[] = {
 	{ "config", &srv6_adj_config_type },
 	{ "packets", &ng_parse_uint64_type },
-	{ "bytes", &ng_parse_uint64_type },
-	{ NULL }
+	{ "bytes", &ng_parse_uint64_type }, { NULL }
 };
 
-static const struct ng_parse_type srv6_adj_info_type = {
-	&ng_parse_struct_type,
-	&srv6_adj_info_fields
-};
+static const struct ng_parse_type srv6_adj_info_type = { &ng_parse_struct_type,
+	&srv6_adj_info_fields };
 
 /*
  * Control message table.
  */
 static const struct ng_cmdlist srv6_cmdlist[] = {
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_ADD_SID,
-		"addsid",
-		&srv6_sid_config_type,
-		NULL
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_DEL_SID,
-		"delsid",
-		&srv6_ip6_type,
-		NULL
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_ADD_ADJ,
-		"addadj",
-		&srv6_adj_config_type,
-		NULL
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_DEL_ADJ,
-		"deladj",
-		&ng_parse_uint32_type,
-		NULL
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_SET_SRC,
-		"setsrc",
-		&srv6_ip6_type,
-		NULL
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_GET_STATS,
-		"getstats",
-		NULL,
-		&srv6_stats_type
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_GET_SID,
-		"getsid",
-		&srv6_ip6_type,
-		&srv6_sid_info_type
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_GET_ADJ,
-		"getadj",
-		&ng_parse_uint32_type,
-		&srv6_adj_info_type
-	},
-	{
-		NG_SRV6_COOKIE,
-		NGM_SRV6_CLR_STATS,
-		"clrstats",
-		NULL,
-		NULL
-	},
-	{ 0 }
+	{ NG_SRV6_COOKIE, NGM_SRV6_ADD_SID, "addsid", &srv6_sid_config_type,
+	    NULL },
+	{ NG_SRV6_COOKIE, NGM_SRV6_DEL_SID, "delsid", &srv6_ip6_type, NULL },
+	{ NG_SRV6_COOKIE, NGM_SRV6_ADD_ADJ, "addadj", &srv6_adj_config_type,
+	    NULL },
+	{ NG_SRV6_COOKIE, NGM_SRV6_DEL_ADJ, "deladj", &ng_parse_uint32_type,
+	    NULL },
+	{ NG_SRV6_COOKIE, NGM_SRV6_SET_SRC, "setsrc", &srv6_ip6_type, NULL },
+	{ NG_SRV6_COOKIE, NGM_SRV6_GET_STATS, "getstats", NULL,
+	    &srv6_stats_type },
+	{ NG_SRV6_COOKIE, NGM_SRV6_GET_SID, "getsid", &srv6_ip6_type,
+	    &srv6_sid_info_type },
+	{ NG_SRV6_COOKIE, NGM_SRV6_GET_ADJ, "getadj", &ng_parse_uint32_type,
+	    &srv6_adj_info_type },
+	{ NG_SRV6_COOKIE, NGM_SRV6_CLR_STATS, "clrstats", NULL, NULL }, { 0 }
 };
 
 /*
@@ -717,18 +638,19 @@ srv6_validate_sid(const struct srv6_sid_config *cfg)
 	}
 
 	if (cfg->nsegments > SRV6_MAX_SEGMENTS) {
-		SRV6_DEBUG("validate sid: too many segments %u", cfg->nsegments);
+		SRV6_DEBUG("validate sid: too many segments %u",
+		    cfg->nsegments);
 		return (EINVAL);
 	}
 
-	if ((base == SRV6_BASE_B6_ENCAPS ||
-	    base == SRV6_BASE_B6_ENCAPS_RED) && cfg->nsegments == 0) {
+	if ((base == SRV6_BASE_B6_ENCAPS || base == SRV6_BASE_B6_ENCAPS_RED) &&
+	    cfg->nsegments == 0) {
 		SRV6_DEBUG("validate sid: B6 encap with no segments");
 		return (EINVAL);
 	}
 
 	if ((base == SRV6_BASE_END_X || base == SRV6_BASE_DX6 ||
-	    base == SRV6_BASE_DX4 || base == SRV6_BASE_DX2) &&
+		base == SRV6_BASE_DX4 || base == SRV6_BASE_DX2) &&
 	    cfg->adj_index == 0) {
 		SRV6_DEBUG("validate sid: End.X/DX with no adjacency");
 		return (EINVAL);
@@ -736,13 +658,14 @@ srv6_validate_sid(const struct srv6_sid_config *cfg)
 
 	if ((flags & (SRV6_FLAVOR_NEXT_CSID | SRV6_FLAVOR_REPLACE_CSID)) != 0 &&
 	    (base == SRV6_BASE_END || base == SRV6_BASE_END_X ||
-	    base == SRV6_BASE_END_T || base == SRV6_BASE_B6_ENCAPS ||
-	    base == SRV6_BASE_B6_ENCAPS_RED)) {
+		base == SRV6_BASE_END_T || base == SRV6_BASE_B6_ENCAPS ||
+		base == SRV6_BASE_B6_ENCAPS_RED)) {
 		int A, F, L;
 
 		error = srv6_csid_layout(cfg, flags, &L, &F, &A);
 		if (error != 0) {
-			SRV6_DEBUG("validate sid: csid layout failed: %d", error);
+			SRV6_DEBUG("validate sid: csid layout failed: %d",
+			    error);
 			return (error);
 		}
 	}
@@ -863,18 +786,23 @@ srv6_parse_packet(struct mbuf *m, struct srv6_pkt *pkt)
 			m_copydata(m, off, sizeof(srh), &srh);
 			if (srh.routing_type == 4 && pkt->srh_off < 0) {
 				slen = (srh.hdr_ext_len + 1) * 8;
-				if (slen != hlen || (srh.hdr_ext_len & 1) != 0) {
-					SRV6_DEBUG("parse packet: bad SRH length");
+				if (slen != hlen ||
+				    (srh.hdr_ext_len & 1) != 0) {
+					SRV6_DEBUG(
+					    "parse packet: bad SRH length");
 					return (EINVAL);
 				}
 				max_le = srh.hdr_ext_len / 2 - 1;
 				if (max_le < 0 || srh.last_entry > max_le) {
-					SRV6_DEBUG("parse packet: bad SRH last_entry");
+					SRV6_DEBUG(
+					    "parse packet: bad SRH last_entry");
 					return (EINVAL);
 				}
 				if ((int)sizeof(srh) +
-				    (srh.last_entry + 1) * SRV6_SID_LEN > slen) {
-					SRV6_DEBUG("parse packet: SRH segment list overflow");
+					(srh.last_entry + 1) * SRV6_SID_LEN >
+				    slen) {
+					SRV6_DEBUG(
+					    "parse packet: SRH segment list overflow");
 					return (EINVAL);
 				}
 				pkt->srh_off = off;
@@ -916,7 +844,8 @@ srv6_parse_srh(struct mbuf *m, int off, struct srv6_srh *srh)
 		return (EINVAL);
 	}
 	if ((int)sizeof(struct srv6_srh) +
-	    (srh->last_entry + 1) * SRV6_SID_LEN > slen) {
+		(srh->last_entry + 1) * SRV6_SID_LEN >
+	    slen) {
 		SRV6_DEBUG("parse srh: segment list overflow");
 		return (EINVAL);
 	}
@@ -936,8 +865,7 @@ srv6_srh_valid(const struct srv6_pkt *pkt)
 	}
 	max_le = pkt->srh.hdr_ext_len / 2 - 1;
 	if (max_le < 0 || pkt->srh.last_entry > max_le) {
-		SRV6_DEBUG("srh valid: bad last_entry %u",
-		    pkt->srh.last_entry);
+		SRV6_DEBUG("srh valid: bad last_entry %u", pkt->srh.last_entry);
 		return (EINVAL);
 	}
 	if (pkt->srh.segments_left > pkt->srh.last_entry + 1) {
@@ -962,8 +890,7 @@ srv6_get_segment(struct mbuf *m, const struct srv6_pkt *pkt, int index,
 		SRV6_DEBUG("get segment: index %d out of range", index);
 		return (EINVAL);
 	}
-	off = pkt->srh_off + sizeof(struct srv6_srh_hdr) +
-	    index * SRV6_SID_LEN;
+	off = pkt->srh_off + sizeof(struct srv6_srh_hdr) + index * SRV6_SID_LEN;
 	if (off + SRV6_SID_LEN > pkt->srh_off + pkt->srh_len) {
 		SRV6_DEBUG("get segment: index %d extends past SRH", index);
 		return (EINVAL);
@@ -990,8 +917,8 @@ srv6_update_sl(struct mbuf *m, struct srv6_pkt *pkt, int sl)
 		return (EINVAL);
 	}
 	v = sl;
-	m_copyback(m, pkt->srh_off +
-	    offsetof(struct srv6_srh_hdr, segments_left), 1, &v);
+	m_copyback(m,
+	    pkt->srh_off + offsetof(struct srv6_srh_hdr, segments_left), 1, &v);
 	pkt->srh.segments_left = v;
 	return (0);
 }
@@ -1031,8 +958,8 @@ srv6_pop_srh(struct mbuf *m, struct srv6_pkt *pkt)
 	shift = pkt->srh_len;
 	total = m_length(m, NULL);
 	if (shift <= 0 || pkt->srh_off + shift > total) {
-		SRV6_DEBUG("pop srh: invalid shift %d off %d total %d",
-		    shift, pkt->srh_off, total);
+		SRV6_DEBUG("pop srh: invalid shift %d off %d total %d", shift,
+		    pkt->srh_off, total);
 		return (EINVAL);
 	}
 
@@ -1143,8 +1070,8 @@ srv6_log2ceil(int v)
 }
 
 static int
-srv6_csid_layout(const struct srv6_sid_config *sid, uint32_t flags,
-    int *L, int *F, int *A)
+srv6_csid_layout(const struct srv6_sid_config *sid, uint32_t flags, int *L,
+    int *F, int *A)
 {
 	int K, X;
 
@@ -1228,7 +1155,8 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 		}
 		error = srv6_decrement_hlim(m, pkt);
 		if (error != 0) {
-			SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
+			SRV6_DEBUG("csid process: decrement hlim failed: %d",
+			    error);
 			return (error);
 		}
 		*handled = 1;
@@ -1271,11 +1199,13 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 				finished = 1;
 		}
 		if (finished) {
-			if ((flags & (SRV6_FLAVOR_PSP |
-			    SRV6_FLAVOR_USP)) != 0) {
+			if ((flags & (SRV6_FLAVOR_PSP | SRV6_FLAVOR_USP)) !=
+			    0) {
 				error = srv6_pop_srh(m, pkt);
 				if (error != 0) {
-					SRV6_DEBUG("csid process: pop srh failed: %d", error);
+					SRV6_DEBUG(
+					    "csid process: pop srh failed: %d",
+					    error);
 					return (error);
 				}
 			}
@@ -1287,22 +1217,27 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 
 	if (index != 0) {
 		if (sl > pkt->srh.last_entry) {
-			SRV6_DEBUG("csid process: sl %d > last_entry %d", sl, pkt->srh.last_entry);
+			SRV6_DEBUG("csid process: sl %d > last_entry %d", sl,
+			    pkt->srh.last_entry);
 			return (EINVAL);
 		}
 		newindex = index - 1;
 		error = srv6_get_segment(m, pkt, sl, container);
 		if (error != 0) {
-			SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
+			SRV6_DEBUG("csid process: get segment %d failed: %d",
+			    sl, error);
 			return (error);
 		}
 		if (!srv6_bits_nonzero(container, newindex * F, F)) {
 			if (sl == 0) {
-				if ((flags & (SRV6_FLAVOR_PSP |
-				    SRV6_FLAVOR_USP)) != 0) {
+				if ((flags &
+					(SRV6_FLAVOR_PSP | SRV6_FLAVOR_USP)) !=
+				    0) {
 					error = srv6_pop_srh(m, pkt);
 					if (error != 0) {
-						SRV6_DEBUG("csid process: pop srh failed: %d", error);
+						SRV6_DEBUG(
+						    "csid process: pop srh failed: %d",
+						    error);
 						return (error);
 					}
 				}
@@ -1313,22 +1248,28 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 			sl--;
 			error = srv6_update_sl(m, pkt, sl);
 			if (error != 0) {
-				SRV6_DEBUG("csid process: update sl failed: %d", error);
+				SRV6_DEBUG("csid process: update sl failed: %d",
+				    error);
 				return (error);
 			}
 			error = srv6_get_segment(m, pkt, sl, container);
 			if (error != 0) {
-				SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
+				SRV6_DEBUG(
+				    "csid process: get segment %d failed: %d",
+				    sl, error);
 				return (error);
 			}
 			error = srv6_update_da(m, pkt, container);
 			if (error != 0) {
-				SRV6_DEBUG("csid process: update da failed: %d", error);
+				SRV6_DEBUG("csid process: update da failed: %d",
+				    error);
 				return (error);
 			}
 			error = srv6_decrement_hlim(m, pkt);
 			if (error != 0) {
-				SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
+				SRV6_DEBUG(
+				    "csid process: decrement hlim failed: %d",
+				    error);
 				return (error);
 			}
 			*handled = 1;
@@ -1343,7 +1284,8 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 		}
 		error = srv6_decrement_hlim(m, pkt);
 		if (error != 0) {
-			SRV6_DEBUG("csid process: decrement hlim failed: %d", error);
+			SRV6_DEBUG("csid process: decrement hlim failed: %d",
+			    error);
 			return (error);
 		}
 		*handled = 1;
@@ -1352,7 +1294,8 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 
 	/* index == 0 and there are more containers. */
 	if (sl > pkt->srh.last_entry + 1) {
-		SRV6_DEBUG("csid process: sl %d > last_entry+1 %d", sl, pkt->srh.last_entry + 1);
+		SRV6_DEBUG("csid process: sl %d > last_entry+1 %d", sl,
+		    pkt->srh.last_entry + 1);
 		return (EINVAL);
 	}
 	sl--;
@@ -1364,14 +1307,16 @@ srv6_csid_process(struct mbuf *m, struct srv6_pkt *pkt,
 	newindex = K - 1;
 	error = srv6_get_segment(m, pkt, sl, container);
 	if (error != 0) {
-		SRV6_DEBUG("csid process: get segment %d failed: %d", sl, error);
+		SRV6_DEBUG("csid process: get segment %d failed: %d", sl,
+		    error);
 		return (error);
 	}
 	if (!srv6_bits_nonzero(container, newindex * F, F)) {
 		if ((flags & (SRV6_FLAVOR_PSP | SRV6_FLAVOR_USP)) != 0) {
 			error = srv6_pop_srh(m, pkt);
 			if (error != 0) {
-				SRV6_DEBUG("csid process: pop srh failed: %d", error);
+				SRV6_DEBUG("csid process: pop srh failed: %d",
+				    error);
 				return (error);
 			}
 		}
@@ -1416,9 +1361,9 @@ srv6_pick_src(struct srv6_priv *priv, const struct srv6_sid_config *sid,
 }
 
 static int
-srv6_process_upper(struct srv6_priv *priv, struct mbuf *m,
-    struct srv6_pkt *pkt, const struct srv6_sid_config *sid,
-    enum srv6_base_behavior base, uint32_t flags, struct srv6_result *res)
+srv6_process_upper(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
+    const struct srv6_sid_config *sid, enum srv6_base_behavior base,
+    uint32_t flags, struct srv6_result *res)
 {
 	if ((flags & SRV6_FLAVOR_USD) != 0 &&
 	    (pkt->upper_nxt == IPPROTO_IPV4 || pkt->upper_nxt == IPPROTO_IPV6))
@@ -1452,8 +1397,8 @@ srv6_process_end(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
 	int error, sl;
 
 	if (pkt->srh_off < 0)
-		return (srv6_process_upper(priv, m, pkt, sid, base, flags,
-		    res));
+		return (
+		    srv6_process_upper(priv, m, pkt, sid, base, flags, res));
 
 	error = srv6_srh_valid(pkt);
 	if (error != 0) {
@@ -1465,12 +1410,13 @@ srv6_process_end(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
 		if ((flags & SRV6_FLAVOR_USP) != 0) {
 			error = srv6_pop_srh(m, pkt);
 			if (error != 0) {
-				SRV6_DEBUG("process end: pop srh failed: %d", error);
+				SRV6_DEBUG("process end: pop srh failed: %d",
+				    error);
 				return (error);
 			}
 		}
-		return (srv6_process_upper(priv, m, pkt, sid, base, flags,
-		    res));
+		return (
+		    srv6_process_upper(priv, m, pkt, sid, base, flags, res));
 	}
 
 	if (pkt->ip6.ip6_hlim <= 1) {
@@ -1506,8 +1452,8 @@ srv6_process_end(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
 			SRV6_DEBUG("process end: pop srh failed: %d", error);
 			return (error);
 		}
-		return (srv6_process_upper(priv, m, pkt, sid, base, flags,
-		    res));
+		return (
+		    srv6_process_upper(priv, m, pkt, sid, base, flags, res));
 	}
 
 	if (base == SRV6_BASE_END_X) {
@@ -1564,14 +1510,15 @@ srv6_decap_and_forward(struct srv6_priv *priv, struct mbuf *m,
 		break;
 	case SRV6_BASE_DT4:
 		res->action = SRV6_ACT_FORWARD_OUT;
-		res->fib_table = sid->fib_table4 != 0 ?
-		    sid->fib_table4 : sid->fib_table;
+		res->fib_table = sid->fib_table4 != 0 ? sid->fib_table4 :
+							sid->fib_table;
 		break;
 	case SRV6_BASE_DT46:
 		res->action = SRV6_ACT_FORWARD_OUT;
 		if (pkt->upper_nxt == IPPROTO_IPV4)
 			res->fib_table = sid->fib_table4 != 0 ?
-			    sid->fib_table4 : sid->fib_table;
+			    sid->fib_table4 :
+			    sid->fib_table;
 		else
 			res->fib_table = sid->fib_table;
 		break;
@@ -1583,9 +1530,9 @@ srv6_decap_and_forward(struct srv6_priv *priv, struct mbuf *m,
 }
 
 static int
-srv6_process_decap(struct srv6_priv *priv, struct mbuf *m,
-    struct srv6_pkt *pkt, const struct srv6_sid_config *sid,
-    enum srv6_base_behavior base, struct srv6_result *res)
+srv6_process_decap(struct srv6_priv *priv, struct mbuf *m, struct srv6_pkt *pkt,
+    const struct srv6_sid_config *sid, enum srv6_base_behavior base,
+    struct srv6_result *res)
 {
 	int error;
 
@@ -1651,10 +1598,9 @@ srv6_process_decap(struct srv6_priv *priv, struct mbuf *m,
 }
 
 static int
-srv6_process_b6(struct srv6_priv *priv, struct mbuf **mp,
-    struct srv6_pkt *pkt, const struct srv6_sid_config *sid,
-    enum srv6_base_behavior base, __unused uint32_t flags,
-    struct srv6_result *res, int csid_done)
+srv6_process_b6(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
+    const struct srv6_sid_config *sid, enum srv6_base_behavior base,
+    __unused uint32_t flags, struct srv6_result *res, int csid_done)
 {
 	struct in6_addr da, src;
 	int error, reduced, sl;
@@ -1675,29 +1621,36 @@ srv6_process_b6(struct srv6_priv *priv, struct mbuf **mp,
 			sl = pkt->srh.segments_left - 1;
 			error = srv6_get_segment(*mp, pkt, sl, &da);
 			if (error != 0) {
-				SRV6_DEBUG("process b6: get segment %d failed: %d", sl, error);
+				SRV6_DEBUG(
+				    "process b6: get segment %d failed: %d", sl,
+				    error);
 				return (error);
 			}
 			error = srv6_decrement_hlim(*mp, pkt);
 			if (error != 0) {
-				SRV6_DEBUG("process b6: decrement hlim failed: %d", error);
+				SRV6_DEBUG(
+				    "process b6: decrement hlim failed: %d",
+				    error);
 				return (error);
 			}
 			error = srv6_update_sl(*mp, pkt, sl);
 			if (error != 0) {
-				SRV6_DEBUG("process b6: update sl failed: %d", error);
+				SRV6_DEBUG("process b6: update sl failed: %d",
+				    error);
 				return (error);
 			}
 			error = srv6_update_da(*mp, pkt, &da);
 			if (error != 0) {
-				SRV6_DEBUG("process b6: update da failed: %d", error);
+				SRV6_DEBUG("process b6: update da failed: %d",
+				    error);
 				return (error);
 			}
 		}
 	}
 
 	if (sid->nsegments == 0 || sid->nsegments > SRV6_MAX_SEGMENTS) {
-		SRV6_DEBUG("process b6: invalid segment count %u", sid->nsegments);
+		SRV6_DEBUG("process b6: invalid segment count %u",
+		    sid->nsegments);
 		return (EINVAL);
 	}
 	error = srv6_pick_src(priv, sid, pkt, &src);
@@ -1705,8 +1658,8 @@ srv6_process_b6(struct srv6_priv *priv, struct mbuf **mp,
 		SRV6_DEBUG("process b6: pick src failed: %d", error);
 		return (error);
 	}
-	error = srv6_encapsulate(mp, &src, &sid->segments[0],
-	    sid->segments, sid->nsegments, reduced);
+	error = srv6_encapsulate(mp, &src, &sid->segments[0], sid->segments,
+	    sid->nsegments, reduced);
 	if (error != 0) {
 		SRV6_DEBUG("process b6: encapsulate failed: %d", error);
 		return (error);
@@ -1734,10 +1687,9 @@ srv6_execute(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
 
 	if ((flags & (SRV6_FLAVOR_NEXT_CSID | SRV6_FLAVOR_REPLACE_CSID)) != 0 &&
 	    (base == SRV6_BASE_END || base == SRV6_BASE_END_X ||
-	    base == SRV6_BASE_END_T || base == SRV6_BASE_B6_ENCAPS ||
-	    base == SRV6_BASE_B6_ENCAPS_RED)) {
-		error = srv6_csid_process(*mp, pkt, sid, flags, &handled,
-		    &end);
+		base == SRV6_BASE_END_T || base == SRV6_BASE_B6_ENCAPS ||
+		base == SRV6_BASE_B6_ENCAPS_RED)) {
+		error = srv6_csid_process(*mp, pkt, sid, flags, &handled, &end);
 		if (error != 0) {
 			SRV6_DEBUG("execute: csid process failed: %d", error);
 			return (error);
@@ -1769,12 +1721,12 @@ srv6_execute(struct srv6_priv *priv, struct mbuf **mp, struct srv6_pkt *pkt,
 	case SRV6_BASE_END:
 	case SRV6_BASE_END_X:
 	case SRV6_BASE_END_T:
-		return (srv6_process_end(priv, *mp, pkt, sid, base, flags,
-		    res));
+		return (
+		    srv6_process_end(priv, *mp, pkt, sid, base, flags, res));
 	case SRV6_BASE_B6_ENCAPS:
 	case SRV6_BASE_B6_ENCAPS_RED:
-		return (srv6_process_b6(priv, mp, pkt, sid, base, flags, res,
-		    0));
+		return (
+		    srv6_process_b6(priv, mp, pkt, sid, base, flags, res, 0));
 	case SRV6_BASE_DX6:
 	case SRV6_BASE_DX4:
 	case SRV6_BASE_DT6:
@@ -1930,7 +1882,8 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 			 * has already been processed locally (SRV6_ACT_CONTINUE
 			 * already decremented it).  Otherwise a non-local DA
 			 * after a continue would decrement HLIM twice. */
-			SRV6_DEBUG("process packet: no local SID for DA: %d", error);
+			SRV6_DEBUG("process packet: no local SID for DA: %d",
+			    error);
 			if (!processed) {
 				error = srv6_decrement_hlim(m, &pkt);
 				if (error != 0) {
@@ -1954,7 +1907,8 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 		switch (res.action) {
 		case SRV6_ACT_CONTINUE:
 			if (++loops > SRV6_MAX_LOOPS) {
-				SRV6_DEBUG("process packet: max loops exceeded");
+				SRV6_DEBUG(
+				    "process packet: max loops exceeded");
 				srv6_drop(priv, m, EHOSTUNREACH);
 				return (EHOSTUNREACH);
 			}
@@ -1965,7 +1919,8 @@ srv6_process_packet(struct srv6_priv *priv, struct mbuf *m)
 		case SRV6_ACT_FORWARD_ADJ:
 			return (srv6_forward_adj(priv, m, res.adj_index));
 		default:
-			SRV6_DEBUG("process packet: unknown action %d", res.action);
+			SRV6_DEBUG("process packet: unknown action %d",
+			    res.action);
 			srv6_drop(priv, m, EINVAL);
 			return (EINVAL);
 		}
@@ -2019,8 +1974,7 @@ srv6_ng_newhook(__unused node_p node, hook_p hook, __unused const char *name)
 	const char *hname;
 
 	hname = NG_HOOK_NAME(hook);
-	if (hname == NULL || hname[0] == '\0' ||
-	    strlen(hname) >= NG_HOOKSIZ) {
+	if (hname == NULL || hname[0] == '\0' || strlen(hname) >= NG_HOOKSIZ) {
 		SRV6_DEBUG("newhook: invalid hook name");
 		return (EINVAL);
 	}
@@ -2114,7 +2068,7 @@ srv6_ng_rcvmsg(node_p node, item_p item, __unused hook_p lasthook)
 		found = 0;
 		LIST_FOREACH(sid, &priv->sids, link) {
 			if (IN6_ARE_ADDR_EQUAL(&sid->config.addr,
-			    &sidcfg.addr)) {
+				&sidcfg.addr)) {
 				sid->config = sidcfg;
 				found = 1;
 				break;
@@ -2394,8 +2348,7 @@ srv6_encapsulate(struct mbuf **mp, const struct in6_addr *src,
 	if (srh_sids == 0)
 		srh_len = 0;
 	else
-		srh_len = sizeof(struct srv6_srh_hdr) +
-		    srh_sids * SRV6_SID_LEN;
+		srh_len = sizeof(struct srv6_srh_hdr) + srh_sids * SRV6_SID_LEN;
 	outer_len = sizeof(struct ip6_hdr) + srh_len;
 	old_len = m_length(m, NULL);
 
@@ -2444,24 +2397,19 @@ srv6_modevent(module_t mod, int type, void *data)
 }
 
 static struct ng_type srv6_ng_type = {
-	.version =	NG_ABI_VERSION,
-	.name =		NG_SRV6_NODE_TYPE,
-	.constructor =	srv6_ng_constructor,
-	.rcvmsg =	srv6_ng_rcvmsg,
-	.shutdown =	srv6_ng_shutdown,
-	.newhook =	srv6_ng_newhook,
-	.rcvdata =	srv6_ng_rcvdata,
-	.disconnect =	srv6_ng_disconnect,
-	.cmdlist =	srv6_cmdlist,
+	.version = NG_ABI_VERSION,
+	.name = NG_SRV6_NODE_TYPE,
+	.constructor = srv6_ng_constructor,
+	.rcvmsg = srv6_ng_rcvmsg,
+	.shutdown = srv6_ng_shutdown,
+	.newhook = srv6_ng_newhook,
+	.rcvdata = srv6_ng_rcvdata,
+	.disconnect = srv6_ng_disconnect,
+	.cmdlist = srv6_cmdlist,
 };
 
-static moduledata_t srv6_mod = {
-	"srv6",
-	srv6_modevent,
-	&srv6_ng_type
-};
+static moduledata_t srv6_mod = { "srv6", srv6_modevent, &srv6_ng_type };
 
 DECLARE_MODULE(srv6, srv6_mod, SI_SUB_PSEUDO, SI_ORDER_MIDDLE);
-MODULE_DEPEND(srv6, netgraph, NG_ABI_VERSION, NG_ABI_VERSION,
-    NG_ABI_VERSION);
+MODULE_DEPEND(srv6, netgraph, NG_ABI_VERSION, NG_ABI_VERSION, NG_ABI_VERSION);
 MODULE_VERSION(srv6, 1);
